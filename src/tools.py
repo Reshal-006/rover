@@ -6,6 +6,7 @@ These are called by the GPT-4o agent during the reasoning loop.
 """
 import os
 import subprocess
+import sys
 
 # All file operations happen inside this folder
 WORKSPACE = 'workspace'
@@ -108,8 +109,8 @@ def run_tests(test_file: str = None) -> dict:
             'output' (str): the pytest terminal output
             'errors' (str): any stderr output
     """
-    cmd = ['python', '-m', 'pytest', '-v', '--tb=short']
-
+    cmd = [sys.executable, '-m', 'pytest', '-v', '--tb=short']
+    
     if test_file:
         cmd.append(test_file)
 
