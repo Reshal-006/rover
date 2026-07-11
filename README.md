@@ -95,7 +95,7 @@ Steps to reproduce:
   (labeled rover)     (api/main.py)        (src/agent.py)
                                                   │
                                      ┌────────────▼────────────┐
-                                     │    GPT-4o (tool use)    │
+                                     │    Gemini (Google GenAI) (tool use)    │
                                      │  decides what to call   │
                                      └────────────┬────────────┘
                                                   │
