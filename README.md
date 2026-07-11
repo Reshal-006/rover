@@ -10,8 +10,6 @@
 
 Rover is an autonomous AI agent that reads a GitHub bug report, navigates your codebase to locate the root cause, writes a failing test to prove the bug exists, applies a targeted fix, verifies it works, and opens a Pull Request — without any human involvement until the review stage.
 
-[Live Agent](https://rover-agent.onrender.com) · [Dashboard](https://rover-agent.streamlit.app) · [Demo](#demo) · [Quickstart](#quickstart)
-
 </div>
 
 ---
@@ -36,7 +34,7 @@ FastAPI webhook receives the event
 Agent clones the repository
           │
           ▼
-GPT-4o explores the codebase
+Gemini (Google GenAI) explores the codebase
   ├── search_code()   finds relevant files
   └── read_file()     reads the suspicious functions
           │
@@ -119,7 +117,7 @@ Steps to reproduce:
 
 | Component | Technology | Why |
 |----------|-----------|-----|
-| Language model | GPT-4o (OpenAI) | Best code reasoning; native function calling API |
+| Language model | Gemini (Google GenAI) | Google GenAI (Gemini) via the `google-genai` SDK; supports function-like tooling and content generation |
 | Agent orchestration | Python 3.11 (raw) | Full control over the loop; easier to debug than frameworks |
 | Web server | FastAPI | Async, webhook-ready, auto-generates `/docs` |
 | GitHub integration | PyGithub | Clean Python SDK for the GitHub REST API |
@@ -136,7 +134,7 @@ Steps to reproduce:
 ### Prerequisites
 
 - Python 3.11+
-- [OpenAI API key](https://platform.openai.com) (free tier available)
+- `GEMINI_API_KEY` (Google GenAI API key or credential) — see Google Cloud / GenAI docs for how to create API credentials
 - [GitHub Personal Access Token](https://github.com/settings/tokens) with `repo` and `write:discussion` scopes
 
 ### Install
@@ -147,7 +145,7 @@ cd rover
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env            # fill in your API keys
+cp .env.example .env            # fill in your API keys (see Environment Variables below)
 ```
 
 ### Run the agent server
@@ -199,14 +197,14 @@ For best results, the Issue description should include:
 Copy `.env.example` to `.env` and fill in the values:
 
 ```env
-OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AQ...         # your Google GenAI API key or credential
 GITHUB_TOKEN=ghp_...
 WEBHOOK_SECRET=any-random-string-matching-your-webhook-settings
 ```
 
 | Variable | Where to get it |
 |---------|----------------|
-| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) → API Keys |
+| `GEMINI_API_KEY` | Google Cloud Console / GenAI credentials — create an API key or service account credential for the GenAI API |
 | `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens |
 | `WEBHOOK_SECRET` | Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
 
@@ -219,7 +217,7 @@ rover/
 ├── src/
 │   ├── agent.py          # reasoning loop — the brain
 │   ├── tools.py          # read_file, search_code, edit_file, run_tests
-│   ├── llm.py            # GPT-4o API + tool definitions + system prompt
+│   ├── llm.py            # Google GenAI client + tool definitions + system prompt
 │   ├── github_client.py  # GitHub API integration
 │   └── utils.py          # logging helpers
 ├── api/
@@ -232,7 +230,7 @@ rover/
 │   ├── rover_banner.png
 │   ├── architecture.png
 │   └── adr/
-│       ├── ADR-001.md    # why GPT-4o function calling over LangChain
+│       ├── ADR-001.md    # why function-calling with the GenAI SDK was chosen over LangChain
 │       ├── ADR-002.md    # why pytest subprocess over importlib
 │       └── ADR-003.md    # why Render over Railway
 ├── .env.example
