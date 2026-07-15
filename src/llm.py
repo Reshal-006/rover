@@ -9,17 +9,106 @@ from google.genai import types
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import time
+import re
+import logging
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
-api_key = os.getenv('GEMINI_API_KEY')
-if not api_key:
-    raise RuntimeError('GEMINI_API_KEY is not set. Add it to the .env file at the repo root.')
+# Logger for LLM decisions
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(level=LOG_LEVEL)
+logger = logging.getLogger('rover.llm')
 
-# Create the Gemini client using your API key
-client = genai.Client(api_key=api_key)
 
-MODEL = 'gemini-3.1-flash-lite'
+class NormalizedResponse:
+    """Simple wrapper used to normalize responses from different providers."""
+    def __init__(self, text='', function_calls=None, candidates=None):
+        self.text = text
+        self.function_calls = function_calls or []
+        self.candidates = candidates or []
+
+
+def get_active_model_config() -> tuple[str, str]:
+    """Return the active provider and model name from environment settings."""
+    provider = os.getenv('LLM_PROVIDER', 'gemini').strip().lower()
+    if provider == 'openrouter':
+        api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
+        if not api_key:
+            raise RuntimeError('OPENROUTER_API_KEY is not set. Add it to the .env file at the repo root.')
+        model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+        return 'openrouter', model
+
+    api_key = os.getenv('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        raise RuntimeError('GEMINI_API_KEY is not set. Add it to the .env file at the repo root.')
+    model = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite').strip()
+    return 'gemini', model
+
+
+PROVIDER, MODEL = get_active_model_config()
+
+# Create the Gemini client if a Gemini key is available.
+client = None
+if PROVIDER == 'gemini':
+    client = genai.Client(api_key=os.getenv('GEMINI_API_KEY', '').strip())
+
+# State used to avoid repeatedly hitting Gemini when its quota is exhausted.
+# `_gemini_backoff_until` is a timestamp; while now < that timestamp we skip
+# Gemini and use OpenRouter directly. `_gemini_failure_count` tracks
+# consecutive quota/rate-limit failures.
+_gemini_backoff_until = 0.0
+_gemini_failure_count = 0
+
+
+def _call_gemini_api(contents: list, model: str, system_prompt: str, tools: list):
+    if client is None:
+        raise RuntimeError('Gemini client is not configured.')
+    return client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            tools=tools,
+            system_instruction=system_prompt,
+        )
+    )
+
+
+def _call_openrouter_api(contents: list, model: str, system_prompt: str, tools: list):
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError('openai package is required for OpenRouter fallback.') from exc
+
+    openrouter_client = OpenAI(
+        api_key=os.getenv('OPENROUTER_API_KEY', '').strip(),
+        base_url='https://openrouter.ai/api/v1',
+    )
+
+    messages = []
+    for content in contents:
+        role = 'user' if content.role == 'user' else 'assistant'
+        text_parts = []
+        for part in content.parts:
+            if getattr(part, 'text', None):
+                text_parts.append(part.text)
+        if text_parts:
+            messages.append({'role': role, 'content': '\n'.join(text_parts)})
+
+    if system_prompt:
+        messages.insert(0, {'role': 'system', 'content': system_prompt})
+
+    response = openrouter_client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.2,
+    )
+
+    text = ''
+    if getattr(response, 'choices', None):
+        text = response.choices[0].message.content or ''
+
+    return NormalizedResponse(text=text, function_calls=[], candidates=[])
 
 # ── Tool definitions ─────────────────────────────────────────────────
 # Gemini uses FunctionDeclaration objects inside a Tool.
@@ -143,19 +232,53 @@ Rules:
 
 def call_gemini(contents: list) -> object:
     '''
-    Send the current conversation to Gemini and get a response.
+    Send the current conversation to the configured model, with automatic fallback
+    to OpenRouter when Gemini hits a quota or rate-limit error.
 
     Args:
         contents: list of types.Content objects (the conversation history)
 
     Returns:
-        The full GenerateContentResponse object.
+        A normalized response object that exposes text/function_calls/candidates.
     '''
-    return client.models.generate_content(
-        model=MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            tools=[ROVER_TOOLS],
-            system_instruction=SYSTEM_PROMPT,
-        )
-    )
+    global _gemini_backoff_until, _gemini_failure_count
+
+    provider, model = get_active_model_config()
+
+    # If we're currently in a Gemini backoff window, skip directly to OpenRouter.
+    if provider == 'gemini' and time.time() < _gemini_backoff_until:
+        if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
+            logger.info('Gemini is in backoff; using OpenRouter fallback.')
+            return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+
+    try:
+        if provider == 'openrouter':
+            return _call_openrouter_api(contents, model, SYSTEM_PROMPT, [ROVER_TOOLS])
+        return _call_gemini_api(contents, model, SYSTEM_PROMPT, [ROVER_TOOLS])
+    except Exception as exc:
+        # If configured provider was OpenRouter, surface the error.
+        if provider == 'openrouter':
+            raise
+
+        msg = str(exc)
+
+        # Detect quota / rate-limit errors and extract retry delay if present.
+        if 'RESOURCE_EXHAUSTED' in msg or '429' in msg or 'quota' in msg.lower():
+            _gemini_failure_count += 1
+
+            m = re.search(r"(\d+(?:\.\d+)?)s", msg)
+            delay = float(m.group(1)) if m else None
+            if delay:
+                _gemini_backoff_until = time.time() + delay + 1.0
+                logger.warning('Gemini quota hit; backing off for %.1fs.', delay)
+            else:
+                _gemini_backoff_until = time.time() + 30.0
+                logger.warning('Gemini quota hit; backing off for 30s (no retry info).')
+
+            # Immediately use OpenRouter if configured.
+            if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
+                logger.info('Gemini failed (%s); falling back to OpenRouter.', exc)
+                return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+
+        # Otherwise, re-raise the original exception.
+        raise
