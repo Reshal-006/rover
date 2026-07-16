@@ -282,3 +282,103 @@ def call_gemini(contents: list) -> object:
 
         # Otherwise, re-raise the original exception.
         raise
+
+
+# ── Structured LLM Analysis ──────────────────────────────────────────
+
+from pydantic import BaseModel, Field
+
+class LLMBugFinding(BaseModel):
+    title: str = Field(description="Short descriptive title of the bug")
+    description: str = Field(description="Detailed explanation of the issue")
+    severity: str = Field(description="Severity: low, medium, high, critical")
+    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
+    category: str = Field(description="Category: Security, Logic, Performance, Reliability, Code Smell, Maintainability")
+    filepath: str = Field(description="Relative path to the file containing the bug")
+    line_number: int = Field(description="Line number where the bug is located")
+    code_snippet: str = Field(description="Code snippet containing the bug")
+    reasoning: str = Field(description="Reasoning explaining why this code is a bug")
+    suggested_fix: str = Field(description="Suggested code fix for the bug")
+    impact: str = Field(description="Impact of the bug: low, medium, high, critical")
+
+class LLMBugAnalysisResponse(BaseModel):
+    findings: list[LLMBugFinding]
+
+
+def call_llm_structured(prompt: str, response_schema) -> str:
+    """
+    Send a prompt expecting a structured JSON response.
+    Supports fallback to OpenRouter when Gemini hits quota or rate limits.
+    """
+    global _gemini_backoff_until, _gemini_failure_count
+    provider, model = get_active_model_config()
+
+    use_openrouter = (provider == 'openrouter' or time.time() < _gemini_backoff_until)
+    
+    if use_openrouter:
+        api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
+        openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+        if api_key:
+            try:
+                from openai import OpenAI
+                openrouter_client = OpenAI(api_key=api_key, base_url='https://openrouter.ai/api/v1')
+                messages = [
+                    {"role": "system", "content": "You are a code analysis helper. You must output raw JSON matching the requested schema. No markdown wrapping, no explanation, only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ]
+                response = openrouter_client.chat.completions.create(
+                    model=openrouter_model,
+                    messages=messages,
+                    temperature=0.1,
+                    response_format={"type": "json_object"}
+                )
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                logger.error("OpenRouter structured call failed: %s", e)
+        if provider == 'openrouter':
+            raise RuntimeError("OpenRouter failed.")
+
+    try:
+        if client is None:
+            raise RuntimeError('Gemini client is not configured.')
+        
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                system_instruction="You are a code analysis helper. You must output raw JSON matching the requested schema."
+            )
+        )
+        return response.text or ""
+    except Exception as exc:
+        msg = str(exc)
+        if 'RESOURCE_EXHAUSTED' in msg or '429' in msg or 'quota' in msg.lower():
+            _gemini_failure_count += 1
+            m = re.search(r"(\d+(?:\.\d+)?)s", msg)
+            delay = float(m.group(1)) if m else None
+            _gemini_backoff_until = time.time() + (delay or 30.0) + 1.0
+            logger.warning('Gemini quota hit; backing off.')
+            
+            # Retry immediately with OpenRouter if available
+            api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
+            openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+            if api_key:
+                try:
+                    from openai import OpenAI
+                    openrouter_client = OpenAI(api_key=api_key, base_url='https://openrouter.ai/api/v1')
+                    messages = [
+                        {"role": "system", "content": "You are a code analysis helper. You must output raw JSON matching the requested schema. No markdown wrapping, no explanation, only valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ]
+                    response = openrouter_client.chat.completions.create(
+                        model=openrouter_model,
+                        messages=messages,
+                        temperature=0.1,
+                        response_format={"type": "json_object"}
+                    )
+                    return response.choices[0].message.content or ""
+                except Exception as e:
+                    logger.error("OpenRouter fallback structured call failed: %s", e)
+        raise

@@ -1,0 +1,15 @@
+{
+  "scan_id": "scan-d94697f3",
+  "repository": "https://github.com/example/demo",
+  "timestamp": "2026-07-16T10:33:38Z",
+  "bugs": [],
+  "status": "completed",
+  "severity": {},
+  "files_scanned": 1,
+  "ignored_files": 0,
+  "scan_duration_seconds": 0.0,
+  "language_breakdown": {
+    "py": 1
+  },
+  "error": null
+}

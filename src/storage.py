@@ -13,18 +13,48 @@ class ScanStore:
 
     def save_scan(self, scan: dict[str, Any]) -> dict[str, Any]:
         scan_id = str(scan.get("scan_id") or "scan")
-        path = self.base_dir / f"{scan_id}.json"
-        path.write_text(json.dumps(scan, indent=2), encoding="utf-8")
+        
+        # Extract findings to save separately
+        # Make a copy of scan metadata without full bugs list
+        meta = {k: v for k, v in scan.items() if k != "bugs"}
+        findings = scan.get("bugs", [])
+        
+        # Save metadata
+        meta_path = self.base_dir / f"{scan_id}.json"
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        
+        # Save findings separately
+        findings_path = self.base_dir / f"{scan_id}_findings.json"
+        findings_path.write_text(json.dumps(findings, indent=2), encoding="utf-8")
+        
         return scan
 
     def load_scan(self, scan_id: str) -> dict[str, Any]:
-        path = self.base_dir / f"{scan_id}.json"
-        if not path.exists():
+        meta_path = self.base_dir / f"{scan_id}.json"
+        if not meta_path.exists():
             raise FileNotFoundError(scan_id)
-        return json.loads(path.read_text(encoding="utf-8"))
+        
+        scan = json.loads(meta_path.read_text(encoding="utf-8"))
+        
+        # Re-attach findings if available
+        findings_path = self.base_dir / f"{scan_id}_findings.json"
+        if findings_path.exists():
+            try:
+                scan["bugs"] = json.loads(findings_path.read_text(encoding="utf-8"))
+            except Exception:
+                scan["bugs"] = []
+        else:
+            scan["bugs"] = []
+            
+        return scan
 
     def list_scans(self) -> list[dict[str, Any]]:
         scans = []
         for path in sorted(self.base_dir.glob("*.json")):
-            scans.append(json.loads(path.read_text(encoding="utf-8")))
+            if path.name.endswith("_findings.json") or path.name.endswith("_progress.json"):
+                continue
+            try:
+                scans.append(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                pass
         return scans

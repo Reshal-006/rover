@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,8 @@ from typing import Any
 
 from src.scan_models import BugFinding, ScanResult
 from src.ranking import rank_findings
+
+logger = logging.getLogger("rover.scanner")
 
 SUPPORTED_EXTENSIONS = {'.py', '.js', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.md'}
 IGNORED_DIRS = {'.git', 'venv', 'node_modules', 'dist', 'build', 'coverage', '__pycache__'}
@@ -34,7 +37,27 @@ def clone_repository(repository_url: str, destination: str | None = None) -> str
     if os.path.exists(target):
         shutil.rmtree(target)
 
-    subprocess.run(["git", "clone", repository_url, target], check=True, capture_output=True, text=True)
+    USE_GITHUB_APP = os.getenv('USE_GITHUB_APP', 'false').lower() == 'true'
+    url = repository_url
+    if USE_GITHUB_APP:
+        from src.github_auth import load_installation_id, get_installation_token
+        installation_id = load_installation_id()
+        if installation_id:
+            repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
+            try:
+                token = get_installation_token(installation_id)
+                url = f'https://x-access-token:{token}@github.com/{repo_name}.git'
+            except Exception as e:
+                raise RuntimeError(f"Failed to retrieve installation token for repository scanning: {e}")
+        else:
+            raise RuntimeError("USE_GITHUB_APP is true but no GitHub App installation ID is stored.")
+    else:
+        GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '').strip()
+        if GITHUB_TOKEN:
+            repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
+            url = f'https://{GITHUB_TOKEN}@github.com/{repo_name}.git'
+
+    subprocess.run(["git", "clone", url, target], check=True, capture_output=True, text=True)
     return target
 
 
@@ -210,35 +233,317 @@ def scan_file(filepath: str) -> list[dict[str, Any]]:
     return findings
 
 
-def scan_repository(repository_url: str, destination: str | None = None) -> dict[str, Any]:
-    start = time.time()
-    repo_path = clone_repository(repository_url, destination)
-    files = _iter_source_files(repo_path)
-    findings: list[dict[str, Any]] = []
-    for path in files:
-        findings.extend(scan_file(str(path)))
+def is_binary(file_path: Path) -> bool:
+    """Check if a file is binary by searching for null bytes in the first chunk."""
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+            return b'\0' in chunk
+    except Exception:
+        return True
 
-    language_breakdown: dict[str, int] = {}
-    for path in files:
-        suffix = path.suffix.lower().lstrip('.') or 'file'
-        language_breakdown[suffix] = language_breakdown.get(suffix, 0) + 1
 
-    ranked_findings = rank_findings(findings)
+def traverse_repo(repo_path: str) -> list[dict[str, Any]]:
+    """Walk the repository recursively and collect supported code files."""
+    discovered_files = []
+    ignored_dirs = {'.git', 'venv', '__pycache__', 'node_modules', 'dist', 'build', 'coverage'}
+    for current_root, dirs, filenames in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('venv')]
+        for filename in filenames:
+            full_path = Path(current_root, filename)
+            if full_path.is_symlink():
+                continue
+            
+            parts = full_path.parts
+            if any(p in ignored_dirs or p.startswith('venv') for p in parts):
+                continue
+                
+            if is_binary(full_path):
+                continue
+                
+            if full_path.suffix.lower() == '.py':
+                rel_path = str(full_path.relative_to(repo_path))
+                discovered_files.append({
+                    'filepath': str(full_path),
+                    'relative_path': rel_path,
+                    'extension': full_path.suffix.lower(),
+                    'size': full_path.stat().st_size
+                })
+    return discovered_files
+
+
+class ASTScanner(ast.NodeVisitor):
+    def __init__(self, filepath: str, source_code: str, relative_path: str):
+        self.filepath = filepath
+        self.source_code = source_code
+        self.relative_path = relative_path
+        self.findings = []
+        self.lines = source_code.splitlines()
+        self.in_with = False
+
+    def add_finding(self, node, category, title, description, severity="medium", confidence=0.8, impact="medium"):
+        line = getattr(node, 'lineno', 1)
+        code_snippet = ""
+        if 0 < line <= len(self.lines):
+            code_snippet = self.lines[line - 1].strip()
+        self.findings.append({
+            'file': self.relative_path,
+            'filepath': self.relative_path,
+            'line_number': line,
+            'bug_type': category,
+            'title': title,
+            'description': description,
+            'severity': severity,
+            'confidence': confidence,
+            'impact': impact,
+            'code_snippet': code_snippet,
+            'category': category,
+            'reasoning': description,
+            'suggested_fix': f"# Review implementation around line {line}"
+        })
+
+    def visit_Call(self, node):
+        # 1. eval()
+        if isinstance(node.func, ast.Name) and node.func.id == 'eval':
+            self.add_finding(node, "Security", "Use of eval() in Python", "eval() can execute arbitrary code and is a security risk.", "high", 0.95, "high")
+        # 2. exec()
+        elif isinstance(node.func, ast.Name) and node.func.id == 'exec':
+            self.add_finding(node, "Security", "Use of exec() in Python", "exec() can execute arbitrary code and is a security risk.", "high", 0.95, "high")
+        # 3. os.system()
+        elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os' and node.func.attr == 'system':
+            self.add_finding(node, "Security", "Use of os.system()", "os.system() is deprecated and vulnerable to command injection.", "high", 0.9, "high")
+        # 4. subprocess shell=True
+        elif (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess') or \
+             (isinstance(node.func, ast.Name) and node.func.id == 'subprocess'):
+            for kw in node.keywords:
+                if kw.arg == 'shell':
+                    if (isinstance(kw.value, ast.Constant) and kw.value.value is True) or \
+                       (isinstance(kw.value, ast.Name) and kw.value.id == 'True'):
+                        self.add_finding(node, "Security", "Subprocess call with shell=True", "Using shell=True can allow command injection if untrusted input is passed.", "high", 0.9, "high")
+
+        # 5. Resource leaks: open() without with
+        if isinstance(node.func, ast.Name) and node.func.id == 'open':
+            if not self.in_with:
+                self.add_finding(node, "Code Smell", "File opened without with-context", "Opening a file without a 'with' statement can lead to resource leaks if not closed properly.", "medium", 0.7, "medium")
+
+        self.generic_visit(node)
+
+    def visit_With(self, node):
+        self.in_with = True
+        self.generic_visit(node)
+        self.in_with = False
+
+    def visit_BinOp(self, node):
+        # 6. division
+        if isinstance(node.op, ast.Div):
+            if isinstance(node.right, ast.Constant) and node.right.value == 0:
+                self.add_finding(node, "Logic", "Division by zero", "Division by constant zero detected, which will crash at runtime.", "critical", 0.99, "high")
+            else:
+                self.add_finding(node, "Reliability", "Division operation", "Division operation detected. Ensure denominator is non-zero.", "low", 0.5, "low")
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node):
+        # 7. indexing
+        self.add_finding(node, "Reliability", "Indexing operation", "Array or dict indexing operation; verify bounds or key existence.", "low", 0.5, "low")
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node):
+        # 8. try/except broad exception or empty pass
+        has_pass = any(isinstance(stmt, ast.Pass) for stmt in node.body)
+        if has_pass:
+            self.add_finding(node, "Code Smell", "Broad exception clause with pass", "Catching exceptions and passing silently can hide critical bugs.", "medium", 0.8, "medium")
+        self.generic_visit(node)
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, str):
+            val = node.value
+            # 9. SQL query strings
+            sql_keywords = ["select ", "insert ", "update ", "delete ", "drop table"]
+            if any(kw in val.lower() for kw in sql_keywords) and "from" in val.lower():
+                self.add_finding(node, "Security", "Potential raw SQL query string", "Raw SQL query string detected; ensure parameters are parameterized to prevent SQL Injection.", "medium", 0.6, "high")
+            
+            # 10. Hardcoded secrets
+            secret_keywords = ["password", "secret", "token", "api_key", "passwd", "pwd"]
+            if any(sk in val.lower() for sk in secret_keywords) and len(val) > 6:
+                self.add_finding(node, "Security", "Potential hardcoded secret value", "Potential hardcoded credential or secret detected.", "high", 0.7, "high")
+        self.generic_visit(node)
+
+
+def run_ast_scanner(text: str, filepath: str, relative_path: str) -> list[dict[str, Any]]:
+    """Parse text AST and run scanner rules."""
+    try:
+        tree = ast.parse(text)
+        scanner = ASTScanner(filepath, text, relative_path)
+        scanner.visit(tree)
+        return scanner.findings
+    except Exception:
+        return []
+
+
+def analyze_file_with_llm(filepath: str, relative_path: str, content: str, static_findings: list[dict]) -> list[dict]:
+    """Ask LLM to perform deep logic/category analysis on the file content."""
+    if not content.strip():
+        return []
+
+    # Limit size to prevent token count overflow
+    if len(content) > 15000:
+        content = content[:15000] + "\n... [TRUNCATED]"
+
+    from src.llm import call_llm_structured, LLMBugAnalysisResponse
+    
+    prompt = f"""
+Analyze the following source code file for potential bugs.
+File Path: {relative_path}
+
+Lightweight Static Analysis Findings:
+{json.dumps(static_findings, indent=2)}
+
+File Content:
+```python
+{content}
+```
+
+Identify any real bugs in this file (e.g. logic errors, security vulnerabilities, reliability issues, performance bottlenecks, code smells, or maintainability issues).
+You must output a JSON object matching the requested schema. You can confirm or discard the static analysis findings, and add any other findings you discover.
+Provide title, description, severity (low, medium, high, critical), confidence (0.0 to 1.0), category (Security, Logic, Performance, Reliability, Code Smell, Maintainability), filepath (must match '{relative_path}'), line_number, code_snippet, reasoning, suggested_fix, and impact (low, medium, high, critical).
+"""
+    try:
+        result_text = call_llm_structured(prompt, LLMBugAnalysisResponse)
+        if result_text:
+            data = json.loads(result_text)
+            findings = data.get("findings", [])
+            
+            # Normalize findings
+            normalized = []
+            for f in findings:
+                f["file"] = relative_path
+                f["filepath"] = relative_path
+                normalized.append(f)
+            return normalized
+    except Exception as e:
+        logger.error("LLM analysis failed for file %s: %s", relative_path, e)
+    return []
+
+
+def scan_repository(repository_url: str, destination: str | None = None, scan_id: str | None = None) -> dict[str, Any]:
+    """Execute the full progress-reporting repository scanner workflow."""
+    from src.storage import ScanStore
+    
+    start_time = time.time()
+    store = ScanStore()
+    
+    if not scan_id:
+        scan_id = f"scan-{int(start_time)}"
+
+    def update_progress(phase: str, progress: int, files_scanned: int = 0, current_file: str = "", status: str = "scanning", bugs: list = None):
+        try:
+            data = store.load_scan(scan_id)
+        except Exception:
+            data = {
+                "scan_id": scan_id,
+                "repository": repository_url,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "status": status,
+                "bugs": [],
+                "files_scanned": 0,
+                "ignored_files": 0,
+                "scan_duration_seconds": 0
+            }
+        data["phase"] = phase
+        data["progress"] = progress
+        data["files_scanned"] = files_scanned
+        data["current_file"] = current_file
+        data["status"] = status
+        if bugs is not None:
+            data["bugs"] = bugs
+        store.save_scan(data)
+
+    # Phase 1: Cloning
+    update_progress("cloning", 10, current_file="Cloning repository...")
+    try:
+        repo_path = clone_repository(repository_url, destination)
+    except Exception as exc:
+        logger.error("Clone failed: %s", exc)
+        update_progress("failed", 10, status="failed")
+        raise
+    logger.info("Repository cloned: %s", repository_url)
+
+    # Phase 2: Traversal / Discovery
+    update_progress("traversal", 20, current_file="Discovering files...")
+    discovered = traverse_repo(repo_path)
+    logger.info("Files discovered: %d", len(discovered))
+
+    # Phase 3: Static Analysis
+    update_progress("static_analysis", 30, current_file="Running static analysis...")
+    findings = []
+    
+    python_files = [f for f in discovered if f['extension'] == '.py']
+    
+    for idx, f in enumerate(python_files):
+        rel = f['relative_path']
+        full = f['filepath']
+        update_progress("static_analysis", int(30 + (idx / max(len(python_files), 1)) * 20), len(python_files), current_file=f"Static analysis: {rel}")
+        try:
+            text = Path(full).read_text(encoding="utf-8", errors="ignore")
+            static_f = run_ast_scanner(text, full, rel)
+            findings.extend(static_f)
+        except Exception as e:
+            logger.error("Failed static analysis for %s: %s", rel, e)
+            
+    logger.info("Static analysis completed")
+
+    # Phase 4: LLM Analysis
+    update_progress("llm_analysis", 50, len(python_files), current_file="Running LLM bug analysis...")
+    llm_findings = []
+    for idx, f in enumerate(python_files):
+        rel = f['relative_path']
+        full = f['filepath']
+        update_progress("llm_analysis", int(50 + (idx / max(len(python_files), 1)) * 35), len(python_files), current_file=f"LLM analysis: {rel}")
+        try:
+            text = Path(full).read_text(encoding="utf-8", errors="ignore")
+            file_static = [sf for sf in findings if sf.get('file') == rel]
+            file_llm = analyze_file_with_llm(full, rel, text, file_static)
+            llm_findings.extend(file_llm)
+        except Exception as e:
+            logger.error("Failed LLM analysis for %s: %s", rel, e)
+            
+    logger.info("LLM analysis completed")
+
+    # Combine findings
+    all_findings = findings + llm_findings
+
+    # Phase 5: Ranking
+    update_progress("ranking", 90, len(python_files), current_file="Ranking findings...")
+    ranked_findings = rank_findings(all_findings)
+    logger.info("Ranking completed")
+
+    # Group counts
     severity_counts = {}
     for bug in ranked_findings:
         severity = str(bug.get("severity", "low")).lower()
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
 
-    result = ScanResult(
-        scan_id=f"scan-{int(time.time())}",
-        repository=repository_url,
-        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        bugs=ranked_findings,
-        status="completed",
-        severity=severity_counts,
-        files_scanned=len(files),
-        ignored_files=0,
-        scan_duration_seconds=round(time.time() - start, 2),
-        language_breakdown=language_breakdown,
-    )
-    return result.to_dict()
+    language_breakdown = {}
+    for f in discovered:
+        ext = f['extension'].lstrip('.') or 'file'
+        language_breakdown[ext] = language_breakdown.get(ext, 0) + 1
+
+    duration = round(time.time() - start_time, 2)
+    result = {
+        "scan_id": scan_id,
+        "repository": repository_url,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "bugs": ranked_findings,
+        "status": "completed",
+        "severity": severity_counts,
+        "files_scanned": len(python_files),
+        "ignored_files": len(discovered) - len(python_files),
+        "scan_duration_seconds": duration,
+        "language_breakdown": language_breakdown,
+        "phase": "completed",
+        "progress": 100,
+        "current_file": ""
+    }
+    
+    store.save_scan(result)
+    return result

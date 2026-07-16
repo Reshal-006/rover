@@ -1,0 +1,27 @@
+{
+  "scan_id": "scan-3518ee6e",
+  "repository": "https://github.com/example/demo",
+  "timestamp": "2026-07-16T08:18:31Z",
+  "bugs": [
+    {
+      "file": "/tmp/pytest-of-reshal/pytest-2/test_scan_endpoint_returns_res0/repo/src/sample.py",
+      "line_number": 1,
+      "severity": "high",
+      "bug_type": "Unsafe eval",
+      "title": "Use of eval()",
+      "description": "Dynamic evaluation can execute arbitrary code and is a security risk.",
+      "confidence": 0.95
+    }
+  ],
+  "status": "completed",
+  "severity": {
+    "high": 1
+  },
+  "files_scanned": 1,
+  "ignored_files": 0,
+  "scan_duration_seconds": 0.0,
+  "language_breakdown": {
+    "py": 1
+  },
+  "error": null
+}

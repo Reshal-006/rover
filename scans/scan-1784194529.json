@@ -1,0 +1,38 @@
+{
+  "scan_id": "scan-1784194529",
+  "repository": "https://github.com/Reshal-006/rover-demo-repo",
+  "timestamp": "2026-07-16T09:35:29Z",
+  "bugs": [
+    {
+      "file": "/tmp/rover_scan/cef6492da0040115000fec9058d8cb92/security.py",
+      "line_number": 5,
+      "severity": "high",
+      "bug_type": "Unsafe eval",
+      "title": "Use of eval() in Python",
+      "description": "Dynamic evaluation can execute arbitrary code and is a security risk.",
+      "confidence": 0.95
+    },
+    {
+      "file": "/tmp/rover_scan/cef6492da0040115000fec9058d8cb92/security.py",
+      "line_number": 1,
+      "severity": "medium",
+      "bug_type": "Hardcoded secret",
+      "title": "Hardcoded credential or secret",
+      "description": "A literal secret or credential appears in the file.",
+      "confidence": 0.8
+    }
+  ],
+  "status": "completed",
+  "severity": {
+    "high": 1,
+    "medium": 1
+  },
+  "files_scanned": 6,
+  "ignored_files": 0,
+  "scan_duration_seconds": 1.32,
+  "language_breakdown": {
+    "md": 1,
+    "py": 5
+  },
+  "error": null
+}

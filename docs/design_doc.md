@@ -29,10 +29,16 @@ is used — the codebase IS the data.
 
 ## Architecture (overview)
 
-GitHub Issue → FastAPI webhook → Agent orchestrator (while loop)
-→ GPT-4o function calling → 4 tools (read_file, search_code,
-edit_file, run_tests) → GitHub comment + Pull Request
-→ Streamlit dashboard
+Rover now supports two entry points:
+
+- **Reactive mode**: GitHub Issue → FastAPI webhook → Agent orchestrator
+- **Proactive mode**: Dashboard scan → repository cloning → static scan
+
+Both modes converge on the same fix engine:
+
+`read_file`, `search_code`, `edit_file`, `run_tests` → GitHub comment + Pull Request
+
+The new scan flow uses lightweight heuristics and persisted findings to surface bugs before the fix pipeline starts.
 
 ## Tech Stack
 

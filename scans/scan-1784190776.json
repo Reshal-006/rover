@@ -1,0 +1,16 @@
+{
+  "scan_id": "scan-1784190776",
+  "repository": "https://github.com/Reshal-006/rover",
+  "timestamp": "2026-07-16T08:32:56Z",
+  "bugs": [],
+  "status": "completed",
+  "severity": {},
+  "files_scanned": 16,
+  "ignored_files": 0,
+  "scan_duration_seconds": 5.24,
+  "language_breakdown": {
+    "md": 3,
+    "py": 13
+  },
+  "error": null
+}

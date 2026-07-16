@@ -101,16 +101,20 @@ def run_agent(bug_report: str) -> str:
 
     return final_summary
 
-from src.github_client import get_issue_text, post_comment, clone_repo
+from src.github_client import get_issue_text, post_comment, clone_repo, RepositoryContext
+from src.github_auth import load_installation_id
 from src.utils import log_run
 
 def run_agent_for_issue(repo_name: str, issue_number: int):
     '''Full agent run triggered by a real GitHub Issue.'''
     start = time.time()
-    clone_repo(repo_name)
-    bug_report = get_issue_text(repo_name, issue_number)
+    inst_id = load_installation_id()
+    ctx = RepositoryContext.from_repo_name(repo_name, inst_id)
+    
+    clone_repo(ctx)
+    bug_report = get_issue_text(ctx, issue_number)
     print(f'Running agent on Issue #{issue_number}...')
     summary    = run_agent(bug_report)
     comment    = f'## Rover Report\n\n{summary}'
-    post_comment(repo_name, issue_number, comment)
+    post_comment(ctx, issue_number, comment)
     log_run(repo_name, issue_number, summary, round(time.time()-start, 1))

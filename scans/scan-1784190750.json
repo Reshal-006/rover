@@ -1,0 +1,15 @@
+{
+  "scan_id": "scan-1784190750",
+  "repository": "https://github.com/Reshal-006/rover-target",
+  "timestamp": "2026-07-16T08:32:30Z",
+  "bugs": [],
+  "status": "completed",
+  "severity": {},
+  "files_scanned": 2,
+  "ignored_files": 0,
+  "scan_duration_seconds": 1.08,
+  "language_breakdown": {
+    "py": 2
+  },
+  "error": null
+}
