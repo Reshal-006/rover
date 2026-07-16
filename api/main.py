@@ -6,13 +6,23 @@ GitHub sends a POST to /webhook when an Issue is labeled rover.
 We validate the signature, return 200 immediately, and run the
 agent in the background so GitHub does not time out.
 """
-import hmac, hashlib, json, os
+import hmac, hashlib, json, os, sys, time, uuid
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from src.agent import run_agent_for_issue
+from src.scanner import scan_repository, validate_repository_url
+from src.storage import ScanStore
+from src.github_client import create_issue_from_scan
 
 load_dotenv()
 app = FastAPI(title='Rover', version='1.0')
+scan_store = ScanStore()
 
 
 def verify_github_signature(payload: bytes, sig_header: str) -> bool:
@@ -34,6 +44,71 @@ def verify_github_signature(payload: bytes, sig_header: str) -> bool:
 def health_check():
     '''Health check endpoint — confirms the server is running.'''
     return {'status': 'Rover is running', 'version': '1.0'}
+
+
+@app.post('/scan')
+async def trigger_scan(payload: dict, background_tasks: BackgroundTasks):
+    repository_url = payload.get('repository_url', '').strip()
+    if not validate_repository_url(repository_url):
+        raise HTTPException(status_code=400, detail='Invalid GitHub repository URL')
+
+    scan_id = f"scan-{uuid.uuid4().hex[:8]}"
+    result = {
+        'scan_id': scan_id,
+        'repository': repository_url,
+        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'bugs': [],
+        'status': 'scanning',
+        'severity': {},
+    }
+    scan_store.save_scan(result)
+
+    if payload.get('async', False):
+        def _run_scan() -> None:
+            try:
+                scan_result = scan_repository(repository_url)
+                scan_result['scan_id'] = scan_id
+                scan_result['status'] = 'completed'
+                scan_store.save_scan(scan_result)
+            except Exception as exc:  # pragma: no cover - defensive path
+                failed = {'scan_id': scan_id, 'repository': repository_url, 'status': 'failed', 'error': str(exc), 'bugs': []}
+                scan_store.save_scan(failed)
+
+        background_tasks.add_task(_run_scan)
+        return result
+
+    try:
+        scan_result = scan_repository(repository_url)
+        scan_result['scan_id'] = scan_id
+        scan_result['status'] = 'completed'
+        scan_store.save_scan(scan_result)
+        return scan_result
+    except Exception as exc:  # pragma: no cover - defensive path
+        failed = {'scan_id': scan_id, 'repository': repository_url, 'status': 'failed', 'error': str(exc), 'bugs': []}
+        scan_store.save_scan(failed)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get('/scan/{scan_id}')
+async def get_scan(scan_id: str):
+    return scan_store.load_scan(scan_id)
+
+
+@app.get('/bugs/{scan_id}')
+async def get_bugs(scan_id: str):
+    scan = scan_store.load_scan(scan_id)
+    return scan.get('bugs', [])
+
+
+@app.post('/fix/{bug_id}')
+async def fix_bug(bug_id: str, payload: dict, background_tasks: BackgroundTasks):
+    repository_url = payload.get('repository_url', '').strip()
+    if not validate_repository_url(repository_url):
+        raise HTTPException(status_code=400, detail='Invalid GitHub repository URL')
+
+    issue_number = create_issue_from_scan(repository_url, bug_id, payload.get('title', 'Rover bug report'), payload.get('description', ''))
+    background_tasks.add_task(run_agent_for_issue, repository_url.replace('https://github.com/', ''), int(issue_number))
+    return {'status': 'issue-created', 'issue_number': issue_number}
 
 
 @app.post('/webhook')
