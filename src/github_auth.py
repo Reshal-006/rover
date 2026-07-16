@@ -24,8 +24,6 @@ load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 GITHUB_APP_ID = os.getenv('GITHUB_APP_ID', '').strip()
 GITHUB_PRIVATE_KEY = os.getenv('GITHUB_PRIVATE_KEY', '').strip()
 GITHUB_WEBHOOK_SECRET = os.getenv('GITHUB_WEBHOOK_SECRET', '').strip()
-GITHUB_CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', '').strip()
-GITHUB_CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '').strip()
 
 # In-memory thread-safe cache for installation tokens
 # Format: installation_id -> {"token": str, "expires_at": datetime (timezone.utc)}
@@ -83,15 +81,24 @@ def _load_private_key(key_setting: str) -> str:
     if not key_setting:
         raise InvalidPrivateKeyError("GITHUB_PRIVATE_KEY is empty or not set.")
 
-    # 1. Check if it points to an existing file
-    if os.path.exists(key_setting):
+    # 1. Check if it points to an existing file (relative to Cwd or absolute)
+    resolved_path = None
+    if os.path.exists(key_setting) and os.path.isfile(key_setting):
+        resolved_path = Path(key_setting)
+    else:
+        project_root = Path(__file__).resolve().parent.parent
+        alt_path = project_root / key_setting
+        if alt_path.exists() and alt_path.is_file():
+            resolved_path = alt_path
+
+    if resolved_path:
         try:
-            with open(key_setting, 'r', encoding='utf-8') as f:
+            with open(resolved_path, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
-                logger.debug("Loaded private key from file path: %s", key_setting)
+                logger.debug("Loaded private key from file path: %s", resolved_path)
                 return content
         except Exception as e:
-            raise InvalidPrivateKeyError(f"Failed to read private key file '{key_setting}': {e}")
+            raise InvalidPrivateKeyError(f"Failed to read private key file '{resolved_path}': {e}")
 
     # 2. Treat as raw PEM content
     # Support escaped newlines (e.g. \n or \\n) commonly used in env variables
@@ -319,9 +326,16 @@ def save_installation_id(installation_id: int):
 
 def load_installation_id() -> int | None:
     """
-    Loads the saved GitHub App Installation ID from the local secure file.
-    Returns None if the file does not exist or cannot be read.
+    Loads the saved GitHub App Installation ID. Checks the environment variable
+    GITHUB_INSTALLATION_ID first, and falls back to the local secure file if not set.
     """
+    env_id = os.getenv("GITHUB_INSTALLATION_ID", "").strip()
+    if env_id:
+        try:
+            return int(env_id)
+        except ValueError:
+            logger.warning("GITHUB_INSTALLATION_ID environment variable is not a valid integer: '%s'", env_id)
+
     if not INSTALLATION_FILE.exists():
         logger.debug("No installation ID file found at %s", INSTALLATION_FILE)
         return None
@@ -332,7 +346,7 @@ def load_installation_id() -> int | None:
             if inst_id is not None:
                 return int(inst_id)
     except Exception as e:
-        logger.warning("Failed to load Installation ID: %s", e)
+        logger.warning("Failed to load Installation ID from file: %s", e)
     return None
 
 

@@ -14,9 +14,10 @@ from src.tools import read_file, search_code, edit_file, run_tests
 
 def test_read_file_returns_string():
     """read_file should return a non-empty string for a file that exists."""
-    result = read_file('src/auth.py')
+    result = read_file('auth.py')
     assert isinstance(result, str)
     assert len(result) > 0
+    assert 'ERROR' not in result
 
 
 def test_read_file_handles_missing_file():
@@ -27,14 +28,14 @@ def test_read_file_handles_missing_file():
 
 def test_search_code_returns_list():
     """search_code should return a list (possibly empty)."""
-    result = search_code('password')
+    result = search_code('authenticate')
     assert isinstance(result, list)
 
 
 def test_search_code_finds_known_keyword():
-    """search_code should find 'password' in the auth.py file."""
-    result = search_code('password')
-    # We know auth.py has the word 'password' in it
+    """search_code should find 'authenticate' in the auth.py file."""
+    result = search_code('authenticate')
+    # We know auth.py has the word 'authenticate' in it
     assert len(result) > 0
     # Each result should have these three keys
     assert 'file' in result[0]

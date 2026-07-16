@@ -12,7 +12,8 @@ def log_run(repo: str, issue_num: int, summary: str, duration: float):
         'repo':             repo,
         'issue_number':     issue_num,
         'summary':          summary,
-        'duration_seconds': duration
+        'duration_seconds': duration,
+        'status':           'completed'
     }
     with open(filename, 'w') as f:
         json.dump(data, f, indent=2)

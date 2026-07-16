@@ -64,8 +64,10 @@ def setup_auth_env(monkeypatch):
     monkeypatch.setattr(github_auth, "GITHUB_APP_ID", "123456")
     monkeypatch.setattr(github_auth, "GITHUB_PRIVATE_KEY", TEST_PRIVATE_KEY)
     monkeypatch.setattr(github_auth, "GITHUB_WEBHOOK_SECRET", "test_webhook_sec")
-    monkeypatch.setattr(github_auth, "GITHUB_CLIENT_ID", "test_client_id")
-    monkeypatch.setattr(github_auth, "GITHUB_CLIENT_SECRET", "test_client_sec")
+    
+    # Delete environment variables to prevent test contamination from local .env
+    monkeypatch.delenv("GITHUB_INSTALLATION_ID", raising=False)
+    monkeypatch.delenv("USE_GITHUB_APP", raising=False)
     
     with github_auth._cache_lock:
         github_auth._token_cache.clear()

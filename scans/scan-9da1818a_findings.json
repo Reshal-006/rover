@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Use of eval() in Python",
+    "description": "The use of the eval() function on untrusted input allows for arbitrary code execution, which is a major security vulnerability.",
+    "severity": "critical",
+    "confidence": 1.0,
+    "category": "Security",
+    "filepath": "src/sample.py",
+    "line_number": 1,
+    "code_snippet": "value = eval(user_input)",
+    "reasoning": "eval() parses and executes the passed string as Python code. If the input comes from an external or untrusted source, an attacker can execute arbitrary commands with the privileges of the Python process.",
+    "suggested_fix": "Replace eval() with a safe alternative like ast.literal_eval() if only parsing data, or use a proper parser (e.g., json.loads) for structured inputs.",
+    "impact": "critical",
+    "file": "src/sample.py"
+  }
+]

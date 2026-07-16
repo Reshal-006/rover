@@ -1,0 +1,14 @@
+{
+  "scan_id": "scan-c8f87b1b",
+  "repository": "https://github.com/Reshal-006/Interactive-quiz-by-reshal",
+  "timestamp": "2026-07-16T13:13:11Z",
+  "status": "completed",
+  "severity": {},
+  "files_scanned": 0,
+  "ignored_files": 0,
+  "scan_duration_seconds": 4.8,
+  "language_breakdown": {},
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

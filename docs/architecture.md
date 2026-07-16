@@ -1,6 +1,6 @@
 # Rover System Architecture & Diagrams
 
-This document contains high-fidelity visual diagrams representing Rover's core components and pipelines.
+This document contains high-fidelity visual diagrams representing Rover's core components, pipelines, and data flows.
 
 ---
 
@@ -17,9 +17,10 @@ graph TD
     DB -->|Triggers Async Scan| SC["Scanner Engine (src/scanner.py)"]
     
     subgraph Core AI System
-        AG -->|Tool Call / Loop| LLM["Gemini Client (src/llm.py)"]
-        AG -->|Read/Edit Files| TL["Tools Layer (src/tools.py)"]
-        SC -->|AST & AST Heuristics| AST["AST Heuristic Scanner"]
+        AG -->|AST Context Lookup| IDX["Codebase Indexer (src/indexer.py)"]
+        AG -->|One-Shot Structured Call| LLM["LLM Client (src/llm.py)"]
+        AG -->|Apply Code Patches| TL["Tools Layer (src/tools.py)"]
+        SC -->|AST Static Rules| AST["AST Heuristic Scanner"]
         SC -->|Gemini Inspection| LLM
         SC -->|Weighted Score| RK["Ranking Engine (src/ranking.py)"]
     end
@@ -39,7 +40,8 @@ Step-by-step pipeline for repository vulnerability scanning and details storage.
 ```mermaid
 flowchart TD
     Start["Scan Triggered"] --> Clone["Clone Target Repository"]
-    Clone --> Traverse["Traverse Supported Extensions (.py)"]
+    Clone --> WarmupIndex["Warm Up Codebase AST Index Cache"]
+    WarmupIndex --> Traverse["Traverse Supported Extensions (.py, etc.)"]
     Traverse --> AST["AST Heuristics Scan (Security rules/bugs)"]
     AST --> LLM["LLM Inspect Findings (Verify context & suggestions)"]
     LLM --> Rank["Ranking & Deduplication (Weighted score)"]
@@ -49,33 +51,36 @@ flowchart TD
 
 ---
 
-## 3. Fix Pipeline (Reactive Fix Loop)
+## 3. Fix Pipeline (Analyze ➔ Gather Context ➔ Solve)
 
-The tool-use execution loop of the autonomous fixing agent.
+The optimized deterministic reasoning loop of the autonomous fixing agent.
 
 ```mermaid
 stateDiagram-v2
     [*] --> ReadIssue : Labeled Issue Latch
     ReadIssue --> InitAgent : Load Agent Prompt & Repo Context
+    InitAgent --> LocalIndexing : Build/Load Local AST Codebase Index
+    LocalIndexing --> ContextGathering : Smart Search & Gather Context Files
+    ContextGathering --> OneShotLLM : Structured BugResolution Generation
+    OneShotLLM --> ApplyPatch : Apply patch & unit tests to workspace
+    ApplyPatch --> RunPytest : Run local pytest validation
     
-    state "Reasoning Loop" as Loop {
-        state "Gemini Decides Action" as Action
-        state "Execute Tool" as Exec
-        
-        Action --> Exec : read_file() / search_code()
-        Exec --> Action : Return File Content
-        Action --> Edit : edit_file()
-        Edit --> Test : run_tests()
-        Test --> Action : Return Test Output
+    state RunPytest {
+        [*] --> CheckPass
+        CheckPass --> SuccessState : Test Passes
+        CheckPass --> RetryReview : Test Fails
+        RetryReview --> ReviewLLMCall : 1-Retry LLM Review with test outputs
+        ReviewLLMCall --> ApplyCorrectedPatch : Apply corrected code & tests
+        ApplyCorrectedPatch --> ReRunPytest : Re-run pytest validation
+        ReRunPytest --> SuccessState : Success
+        ReRunPytest --> FailureState : Failure (Max retries reached)
     }
     
-    InitAgent --> Action
-    Action --> Verify : Success (Failing test written & passed)
-    Action --> Retry : Error / Limit exceeded
-    
-    Verify --> OpenPR : Create Pull Request
-    OpenPR --> Comment : Post explanatory comment
-    Comment --> [*]
+    SuccessState --> CommitAndPush : Commit changes & execute push loop
+    FailureState --> CommitAndPush : Commit changes & execute push loop (fail status logged)
+    CommitAndPush --> CreatePR : Open Pull Request on GitHub
+    CreatePR --> CommentOnIssue : Post final report comment
+    CommentOnIssue --> [*]
 ```
 
 ---
@@ -145,6 +150,7 @@ graph TB
         scanner["scanner.py"]
         ranking["ranking.py"]
         storage["storage.py"]
+        indexer["indexer.py"]
     end
     
     app.py --> auth
@@ -152,6 +158,7 @@ graph TB
     main.py --> agent
     main.py --> scanner
     agent --> llm
+    agent --> indexer
     agent --> tools
     scanner --> ranking
     scanner --> storage

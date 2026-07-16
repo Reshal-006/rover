@@ -36,7 +36,7 @@ def get_active_model_config() -> tuple[str, str]:
         api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
         if not api_key:
             raise RuntimeError('OPENROUTER_API_KEY is not set. Add it to the .env file at the repo root.')
-        model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+        model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
         return 'openrouter', model
 
     api_key = os.getenv('GEMINI_API_KEY', '').strip()
@@ -249,7 +249,7 @@ def call_gemini(contents: list) -> object:
     if provider == 'gemini' and time.time() < _gemini_backoff_until:
         if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
             logger.info('Gemini is in backoff; using OpenRouter fallback.')
-            return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+            return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
 
     try:
         if provider == 'openrouter':
@@ -278,7 +278,7 @@ def call_gemini(contents: list) -> object:
             # Immediately use OpenRouter if configured.
             if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
                 logger.info('Gemini failed (%s); falling back to OpenRouter.', exc)
-                return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+                return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
 
         # Otherwise, re-raise the original exception.
         raise
@@ -305,6 +305,17 @@ class LLMBugAnalysisResponse(BaseModel):
     findings: list[LLMBugFinding]
 
 
+class BugResolution(BaseModel):
+    analysis: str = Field(description="Explanation of the bug root cause and diagnosis")
+    patch: str = Field(description="The complete updated file content containing the fix. Do NOT output a diff; output the complete content of the file.")
+    filepath: str = Field(description="The relative path to the source file to modify (e.g., src/auth.py)")
+    tests: str = Field(description="Complete pytest source code to reproduce the bug and verify the fix. Make sure it imports from the app correctly.")
+    test_filepath: str = Field(description="The relative path to write the test file (e.g., tests/test_auth.py)")
+    commit_message: str = Field(description="A concise git commit message describing the fix")
+    pr_title: str = Field(description="Title for the Pull Request")
+    pr_body: str = Field(description="Detailed markdown description for the Pull Request, summarizing the changes")
+
+
 def call_llm_structured(prompt: str, response_schema) -> str:
     """
     Send a prompt expecting a structured JSON response.
@@ -317,7 +328,7 @@ def call_llm_structured(prompt: str, response_schema) -> str:
     
     if use_openrouter:
         api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
-        openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+        openrouter_model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
         if api_key:
             try:
                 from openai import OpenAI
@@ -332,6 +343,9 @@ def call_llm_structured(prompt: str, response_schema) -> str:
                     temperature=0.1,
                     response_format={"type": "json_object"}
                 )
+                prompt_tokens = getattr(response.usage, 'prompt_tokens', 'unknown')
+                completion_tokens = getattr(response.usage, 'completion_tokens', 'unknown')
+                logger.info("OpenRouter token usage: Prompt: %s, Completion: %s", prompt_tokens, completion_tokens)
                 return response.choices[0].message.content or ""
             except Exception as e:
                 logger.error("OpenRouter structured call failed: %s", e)
@@ -351,6 +365,12 @@ def call_llm_structured(prompt: str, response_schema) -> str:
                 system_instruction="You are a code analysis helper. You must output raw JSON matching the requested schema."
             )
         )
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            logger.info(
+                "Gemini token usage: Prompt: %s, Completion: %s",
+                getattr(response.usage_metadata, 'prompt_token_count', 'unknown'),
+                getattr(response.usage_metadata, 'candidates_token_count', 'unknown')
+            )
         return response.text or ""
     except Exception as exc:
         msg = str(exc)
@@ -363,7 +383,7 @@ def call_llm_structured(prompt: str, response_schema) -> str:
             
             # Retry immediately with OpenRouter if available
             api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
-            openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
+            openrouter_model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
             if api_key:
                 try:
                     from openai import OpenAI
@@ -378,6 +398,9 @@ def call_llm_structured(prompt: str, response_schema) -> str:
                         temperature=0.1,
                         response_format={"type": "json_object"}
                     )
+                    prompt_tokens = getattr(response.usage, 'prompt_tokens', 'unknown')
+                    completion_tokens = getattr(response.usage, 'completion_tokens', 'unknown')
+                    logger.info("OpenRouter fallback token usage: Prompt: %s, Completion: %s", prompt_tokens, completion_tokens)
                     return response.choices[0].message.content or ""
                 except Exception as e:
                     logger.error("OpenRouter fallback structured call failed: %s", e)

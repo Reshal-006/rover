@@ -109,9 +109,12 @@ def test_retry_on_auth_failure():
             assert ctx.client == mock_client2
 
 
-def test_custom_exception_mapping():
+def test_custom_exception_mapping(monkeypatch):
     """Verify GithubExceptions are correctly mapped to our custom exceptions."""
     mock_client = MagicMock(spec=Github)
+    monkeypatch.setattr("src.github_client.get_github_client", lambda inst_id: mock_client)
+    monkeypatch.setattr("src.github_client.get_installation_token", lambda inst_id: "fake_token")
+    
     ctx = MagicMock()
     ctx.client = mock_client
     ctx.owner = "owner"
@@ -124,13 +127,19 @@ def test_custom_exception_mapping():
         read_repository(ctx)
         
     # 403 Rate Limit -> GitHubClientError
-    mock_client.get_repo.side_effect = GithubException(403, {"message": "rate limit exceeded"}, None)
+    mock_client.get_repo.side_effect = [
+        GithubException(403, {"message": "rate limit exceeded"}, None),
+        GithubException(403, {"message": "rate limit exceeded"}, None)
+    ]
     with pytest.raises(GitHubClientError) as exc_info:
         read_repository(ctx)
     assert "Rate limit exceeded" in str(exc_info.value)
     
     # 403 Access Denied -> RepositoryAccessDenied
-    mock_client.get_repo.side_effect = GithubException(403, {"message": "Forbidden"}, None)
+    mock_client.get_repo.side_effect = [
+        GithubException(403, {"message": "Forbidden"}, None),
+        GithubException(403, {"message": "Forbidden"}, None)
+    ]
     with pytest.raises(RepositoryAccessDenied):
         read_repository(ctx)
 

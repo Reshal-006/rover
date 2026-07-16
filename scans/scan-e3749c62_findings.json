@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Unused Variable",
+    "description": "The variable 'value' is defined at the module level but is never accessed or used within the script.",
+    "severity": "low",
+    "confidence": 1.0,
+    "category": "Maintainability",
+    "filepath": "src/sample.py",
+    "line_number": 1,
+    "code_snippet": "value = 42",
+    "reasoning": "Defining a variable that is never used consumes memory unnecessarily and creates confusion for maintainers.",
+    "suggested_fix": "Remove the unused variable 'value' if it is not intended for use.",
+    "impact": "low",
+    "file": "src/sample.py"
+  }
+]

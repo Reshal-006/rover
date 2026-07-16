@@ -1,0 +1,18 @@
+{
+  "scan_id": "scan-bb3a43a9",
+  "repository": "https://github.com/example/demo",
+  "timestamp": "2026-07-16T15:15:51Z",
+  "status": "completed",
+  "severity": {
+    "low": 1
+  },
+  "files_scanned": 1,
+  "ignored_files": 0,
+  "scan_duration_seconds": 2.37,
+  "language_breakdown": {
+    "py": 1
+  },
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

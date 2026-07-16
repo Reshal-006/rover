@@ -368,6 +368,25 @@ class ASTScanner(ast.NodeVisitor):
                 self.add_finding(node, "Security", "Potential hardcoded secret value", "Potential hardcoded credential or secret detected.", "high", 0.7, "high")
         self.generic_visit(node)
 
+    def visit_Assign(self, node):
+        # Check target names for secret keywords
+        is_secret_var = False
+        secret_keywords = ["password", "secret", "token", "api_key", "passwd", "pwd"]
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                if any(sk in target.id.lower() for sk in secret_keywords):
+                    is_secret_var = True
+            elif isinstance(target, ast.Attribute):
+                if any(sk in target.attr.lower() for sk in secret_keywords):
+                    is_secret_var = True
+                    
+        if is_secret_var and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            val = node.value.value
+            if len(val) > 4:  # Non-trivial string length
+                self.add_finding(node, "Security", "Potential hardcoded secret value", "Potential hardcoded credential or secret detected.", "high", 0.7, "high")
+        self.generic_visit(node)
+
+
 
 def run_ast_scanner(text: str, filepath: str, relative_path: str) -> list[dict[str, Any]]:
     """Parse text AST and run scanner rules."""
@@ -435,7 +454,7 @@ def scan_repository(repository_url: str, destination: str | None = None, scan_id
     if not scan_id:
         scan_id = f"scan-{int(start_time)}"
 
-    def update_progress(phase: str, progress: int, files_scanned: int = 0, current_file: str = "", status: str = "scanning", bugs: list = None):
+    def update_progress(phase: str, progress: int, files_scanned: int = 0, current_file: str = "", status: str = "scanning", bugs: list = None, error: str = None):
         try:
             data = store.load_scan(scan_id)
         except Exception:
@@ -456,94 +475,104 @@ def scan_repository(repository_url: str, destination: str | None = None, scan_id
         data["status"] = status
         if bugs is not None:
             data["bugs"] = bugs
+        if error is not None:
+            data["error"] = error
         store.save_scan(data)
 
-    # Phase 1: Cloning
-    update_progress("cloning", 10, current_file="Cloning repository...")
     try:
+        # Phase 1: Cloning
+        update_progress("cloning", 10, current_file="Cloning repository...")
         repo_path = clone_repository(repository_url, destination)
+        logger.info("Repository cloned: %s", repository_url)
+
+        # Build symbol table index once per scan and cache it
+        try:
+            from src.indexer import RepositoryIndexer
+            indexer = RepositoryIndexer(repo_path)
+            indexer.get_index()
+        except Exception as e:
+            logger.warning("Failed to build repository index cache: %s", e)
+
+        # Phase 2: Traversal / Discovery
+        update_progress("traversal", 20, current_file="Discovering files...")
+        discovered = traverse_repo(repo_path)
+        logger.info("Files discovered: %d", len(discovered))
+
+        # Phase 3: Static Analysis
+        update_progress("static_analysis", 30, current_file="Running static analysis...")
+        findings = []
+        
+        python_files = [f for f in discovered if f['extension'] == '.py']
+        
+        for idx, f in enumerate(python_files):
+            rel = f['relative_path']
+            full = f['filepath']
+            update_progress("static_analysis", int(30 + (idx / max(len(python_files), 1)) * 20), len(python_files), current_file=f"Static analysis: {rel}")
+            try:
+                text = Path(full).read_text(encoding="utf-8", errors="ignore")
+                static_f = run_ast_scanner(text, full, rel)
+                findings.extend(static_f)
+            except Exception as e:
+                logger.error("Failed static analysis for %s: %s", rel, e)
+                
+        logger.info("Static analysis completed")
+
+        # Phase 4: LLM Analysis
+        update_progress("llm_analysis", 50, len(python_files), current_file="Running LLM bug analysis...")
+        llm_findings = []
+        for idx, f in enumerate(python_files):
+            rel = f['relative_path']
+            full = f['filepath']
+            update_progress("llm_analysis", int(50 + (idx / max(len(python_files), 1)) * 35), len(python_files), current_file=f"LLM analysis: {rel}")
+            try:
+                text = Path(full).read_text(encoding="utf-8", errors="ignore")
+                file_static = [sf for sf in findings if sf.get('file') == rel]
+                file_llm = analyze_file_with_llm(full, rel, text, file_static)
+                llm_findings.extend(file_llm)
+            except Exception as e:
+                logger.error("Failed LLM analysis for %s: %s", rel, e)
+                
+        logger.info("LLM analysis completed")
+
+        # Combine findings
+        all_findings = findings + llm_findings
+
+        # Phase 5: Ranking
+        update_progress("ranking", 90, len(python_files), current_file="Ranking findings...")
+        ranked_findings = rank_findings(all_findings)
+        logger.info("Ranking completed")
+
+        # Group counts
+        severity_counts = {}
+        for bug in ranked_findings:
+            severity = str(bug.get("severity", "low")).lower()
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
+        language_breakdown = {}
+        for f in discovered:
+            ext = f['extension'].lstrip('.') or 'file'
+            language_breakdown[ext] = language_breakdown.get(ext, 0) + 1
+
+        duration = round(time.time() - start_time, 2)
+        result = {
+            "scan_id": scan_id,
+            "repository": repository_url,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "bugs": ranked_findings,
+            "status": "completed",
+            "severity": severity_counts,
+            "files_scanned": len(python_files),
+            "ignored_files": len(discovered) - len(python_files),
+            "scan_duration_seconds": duration,
+            "language_breakdown": language_breakdown,
+            "phase": "completed",
+            "progress": 100,
+            "current_file": ""
+        }
+        
+        store.save_scan(result)
+        return result
     except Exception as exc:
-        logger.error("Clone failed: %s", exc)
-        update_progress("failed", 10, status="failed")
+        logger.error("Scan failed: %s", exc)
+        update_progress("failed", 100, status="failed", error=str(exc))
         raise
-    logger.info("Repository cloned: %s", repository_url)
-
-    # Phase 2: Traversal / Discovery
-    update_progress("traversal", 20, current_file="Discovering files...")
-    discovered = traverse_repo(repo_path)
-    logger.info("Files discovered: %d", len(discovered))
-
-    # Phase 3: Static Analysis
-    update_progress("static_analysis", 30, current_file="Running static analysis...")
-    findings = []
-    
-    python_files = [f for f in discovered if f['extension'] == '.py']
-    
-    for idx, f in enumerate(python_files):
-        rel = f['relative_path']
-        full = f['filepath']
-        update_progress("static_analysis", int(30 + (idx / max(len(python_files), 1)) * 20), len(python_files), current_file=f"Static analysis: {rel}")
-        try:
-            text = Path(full).read_text(encoding="utf-8", errors="ignore")
-            static_f = run_ast_scanner(text, full, rel)
-            findings.extend(static_f)
-        except Exception as e:
-            logger.error("Failed static analysis for %s: %s", rel, e)
-            
-    logger.info("Static analysis completed")
-
-    # Phase 4: LLM Analysis
-    update_progress("llm_analysis", 50, len(python_files), current_file="Running LLM bug analysis...")
-    llm_findings = []
-    for idx, f in enumerate(python_files):
-        rel = f['relative_path']
-        full = f['filepath']
-        update_progress("llm_analysis", int(50 + (idx / max(len(python_files), 1)) * 35), len(python_files), current_file=f"LLM analysis: {rel}")
-        try:
-            text = Path(full).read_text(encoding="utf-8", errors="ignore")
-            file_static = [sf for sf in findings if sf.get('file') == rel]
-            file_llm = analyze_file_with_llm(full, rel, text, file_static)
-            llm_findings.extend(file_llm)
-        except Exception as e:
-            logger.error("Failed LLM analysis for %s: %s", rel, e)
-            
-    logger.info("LLM analysis completed")
-
-    # Combine findings
-    all_findings = findings + llm_findings
-
-    # Phase 5: Ranking
-    update_progress("ranking", 90, len(python_files), current_file="Ranking findings...")
-    ranked_findings = rank_findings(all_findings)
-    logger.info("Ranking completed")
-
-    # Group counts
-    severity_counts = {}
-    for bug in ranked_findings:
-        severity = str(bug.get("severity", "low")).lower()
-        severity_counts[severity] = severity_counts.get(severity, 0) + 1
-
-    language_breakdown = {}
-    for f in discovered:
-        ext = f['extension'].lstrip('.') or 'file'
-        language_breakdown[ext] = language_breakdown.get(ext, 0) + 1
-
-    duration = round(time.time() - start_time, 2)
-    result = {
-        "scan_id": scan_id,
-        "repository": repository_url,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "bugs": ranked_findings,
-        "status": "completed",
-        "severity": severity_counts,
-        "files_scanned": len(python_files),
-        "ignored_files": len(discovered) - len(python_files),
-        "scan_duration_seconds": duration,
-        "language_breakdown": language_breakdown,
-        "phase": "completed",
-        "progress": 100,
-        "current_file": ""
-    }
-    
-    store.save_scan(result)
-    return result

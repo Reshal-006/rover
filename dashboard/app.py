@@ -99,7 +99,7 @@ def inject_dashboard_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         
         /* Reset and main layout wrapper */
-        html, body, [class*="css"], .stApp, p, span, div, label, input, button {
+        html, body, .stApp, p, span, div, label, input, button {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
         }
 
@@ -459,6 +459,9 @@ def inject_dashboard_theme() -> None:
     )
 
 # Reusable UI Components
+def clean_html(html_str: str) -> str:
+    return " ".join(line.strip() for line in html_str.splitlines())
+
 def render_metric_card(title, value, trend_value, trend_direction, icon_name):
     trend_color = "#16A34A" if trend_direction == "up" else "#DC2626" if trend_direction == "down" else "#64748B"
     trend_bg = "#DCFCE7" if trend_direction == "up" else "#FEE2E2" if trend_direction == "down" else "#F1F5F9"
@@ -466,15 +469,15 @@ def render_metric_card(title, value, trend_value, trend_direction, icon_name):
     
     trend_html = ""
     if trend_value:
-        trend_html = f"""
+        trend_html = clean_html(f"""
         <div style="background: {trend_bg}; color: {trend_color}; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 2px;">
             {get_icon_svg(trend_icon, 12, trend_color)}
             {trend_value}
         </div>
-        """
+        """)
         
     st.markdown(
-        f"""
+        clean_html(f"""
         <div class="saas-card metric-card-new">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
                 <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -487,7 +490,7 @@ def render_metric_card(title, value, trend_value, trend_direction, icon_name):
                 </div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -508,7 +511,7 @@ def render_bug_card(idx, bug, scan_id, repository):
     }
     sev_style = sev_colors.get(severity, {"bg": "#F1F5F9", "text": "#475569", "border": "#94A3B8"})
     
-    card_html = f"""
+    card_html = clean_html(f"""
     <div style="border-left: 4px solid {sev_style['border']}; margin-bottom: 8px;" class="saas-card">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 16px;">
             <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -525,12 +528,12 @@ def render_bug_card(idx, bug, scan_id, repository):
             <span>🏷️ <b>Category:</b> {category}</span>
         </div>
     </div>
-    """
+    """)
     st.markdown(card_html, unsafe_allow_html=True)
 
 def render_empty_state(title, description, icon_name="info"):
     st.markdown(
-        f"""
+        clean_html(f"""
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center; background: white; border: 1px dashed #E2E8F0; border-radius: 16px; margin: 16px 0;">
             <div style="width: 48px; height: 48px; background: #F1F5F9; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; color: #64748B;">
                 {get_icon_svg(icon_name, 24, "#64748B")}
@@ -538,20 +541,21 @@ def render_empty_state(title, description, icon_name="info"):
             <h3 style="font-size: 15px; font-weight: 600; color: #0F172A; margin: 0 0 6px 0;">{title}</h3>
             <p style="font-size: 13px; color: #64748B; margin: 0; max-width: 320px; line-height: 1.4;">{description}</p>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
 def render_scanner_timeline(current_phase, status, progress_val):
     phases = [
         ("cloning", "Cloning Repository"),
+        ("traversal", "Discovering Codebase Files"),
         ("static_analysis", "Static Analysis (AST Rules)"),
-        ("gemini_scan", "AI Vulnerability Analysis"),
+        ("llm_analysis", "AI Vulnerability Analysis"),
         ("ranking", "Ranking & Deduplicating Findings"),
         ("completed", "Saving Scan & Complete")
     ]
     
-    phase_order = ["cloning", "static_analysis", "gemini_scan", "ranking", "completed"]
+    phase_order = ["cloning", "traversal", "static_analysis", "llm_analysis", "ranking", "completed"]
     current_index = -1
     if current_phase in phase_order:
         current_index = phase_order.index(current_phase)
@@ -570,7 +574,7 @@ def render_scanner_timeline(current_phase, status, progress_val):
         icon = get_icon_svg("check-circle", 16, "#16A34A") if p_status == "completed" else get_icon_svg("refresh-cw", 16, "#4F46E5") if p_status == "active" else get_icon_svg("clock", 16, "#94A3B8")
         status_class = f"timeline-item-{p_status}"
         
-        timeline_html += f"""
+        timeline_html += clean_html(f"""
         <div class="timeline-item {status_class}">
             <div class="timeline-item-icon">{icon}</div>
             <div class="timeline-item-content">
@@ -578,18 +582,18 @@ def render_scanner_timeline(current_phase, status, progress_val):
                 <span class="timeline-item-badge">{p_status.upper()}</span>
             </div>
         </div>
-        """
+        """)
     timeline_html += '</div>'
-    return timeline_html
+    return clean_html(timeline_html)
 
 def render_sidebar(active_page):
     st.sidebar.markdown(
-        f"""
+        clean_html(f"""
         <div class="sidebar-logo">
             <div class="logo-box">R</div>
             <span class="brand-name">Rover</span>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
     
@@ -608,10 +612,10 @@ def render_sidebar(active_page):
         """
     menu_html += '</div>'
     
-    st.sidebar.markdown(menu_html, unsafe_allow_html=True)
+    st.sidebar.markdown(clean_html(menu_html), unsafe_allow_html=True)
     
     st.sidebar.markdown(
-        f"""
+        clean_html(f"""
         <div class="sidebar-footer">
             <div class="user-avatar">RS</div>
             <div class="user-info">
@@ -619,31 +623,31 @@ def render_sidebar(active_page):
                 <span class="user-role">Rover Alpha</span>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
 def render_topbar(connection_status, target_account, repo_url=None):
     status_html = ""
     if connection_status == "Connected":
-        status_html = f"""
+        status_html = clean_html(f"""
         <div class="status-badge status-connected">
             <span style="width: 8px; height: 8px; border-radius: 50%; background: #16A34A; display: inline-block;"></span>
             Connected: {target_account}
         </div>
-        """
+        """)
     else:
-        status_html = """
+        status_html = clean_html("""
         <div class="status-badge status-disconnected">
             <span style="width: 8px; height: 8px; border-radius: 50%; background: #DC2626; display: inline-block;"></span>
             Disconnected
         </div>
-        """
+        """)
         
     repo_text = repo_url if repo_url else "No Active Repository"
     
     st.markdown(
-        f"""
+        clean_html(f"""
         <div class="topbar">
             <div class="topbar-left">
                 <span style="font-weight: 500; font-size: 13.5px; color: #64748B;">Active:</span>
@@ -657,7 +661,7 @@ def render_topbar(connection_status, target_account, repo_url=None):
                 </div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -706,13 +710,13 @@ render_topbar(connection_status, target_account, active_repo_url)
 
 if active_page == "Dashboard":
     st.markdown(
-        """
+        clean_html("""
         <div class="saas-hero">
             <div class="pill">Rover Alpha v1.0.0</div>
             <h1 style="font-size: 26px; font-weight: 700; color: #0F172A; margin: 12px 0 8px 0; letter-spacing: -0.02em;">Welcome, Developer</h1>
             <p style="font-size: 14px; color: #475569; margin: 0; line-height: 1.5; max-width: 580px;">Rover continuously explores your repos to automate vulnerability diagnostics and issue fixes.</p>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
     
@@ -748,7 +752,7 @@ if active_page == "Dashboard":
                 issue = r.get('issue_number', '')
                 status = r.get('status', 'completed')
                 st.markdown(
-                    f"""
+                    clean_html(f"""
                     <div style="background: white; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; margin-bottom: 8px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:600; font-size:13.5px; color:#0F172A;">{repo}</span>
@@ -760,7 +764,7 @@ if active_page == "Dashboard":
                             <span>At: {ts}</span>
                         </div>
                     </div>
-                    """,
+                    """),
                     unsafe_allow_html=True
                 )
         else:
@@ -769,7 +773,7 @@ if active_page == "Dashboard":
     with col_right:
         st.markdown("<h3 style='font-size:16px; font-weight:700; color:#0F172A; margin-bottom:12px;'>Core Workflows</h3>", unsafe_allow_html=True)
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="saas-card" style="padding: 20px; display:flex; flex-direction:column; gap:12px;">
                 <div style="display:flex; gap:12px; align-items:center;">
                     <div style="width:28px; height:28px; background:#EEF2FF; border-radius:6px; display:flex; align-items:center; justify-content:center;">{get_icon_svg("folder-git-2", 14, "#4F46E5")}</div>
@@ -784,7 +788,7 @@ if active_page == "Dashboard":
                     <span style="font-size:13px; font-weight:600; color:#334155;">Auto Pytest Validation & PR Open</span>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True
         )
 
@@ -801,13 +805,13 @@ elif active_page == "Repositories & Scanner":
     if active_scan_id:
         start_time = st.session_state.get('scan_start_time', time.time())
         st.markdown(
-            f"""
+            clean_html(f"""
             <div class="saas-card" style="margin-bottom: 24px;">
                 <h3 style="font-size: 15px; font-weight: 700; color: #0F172A; margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
                     {get_icon_svg("refresh-cw", 16, "#4F46E5")} Scan active: <code>{active_scan_id}</code>
                 </h3>
             </div>
-            """,
+            """),
             unsafe_allow_html=True
         )
         
@@ -851,9 +855,11 @@ elif active_page == "Repositories & Scanner":
                 st.session_state['latest_scan'] = scan_data
                 if status == "completed":
                     st.success(f"Scan finished successfully! Found {len(scan_data.get('bugs', []))} findings.")
+                    st.query_params["page"] = "Bug Explorer"
                 else:
-                    st.error("Scan run failed. Please verify repository contents or connection status.")
-                time.sleep(1)
+                    err_msg = scan_data.get("error", "Please verify repository contents or connection status.")
+                    st.error(f"Scan run failed: {err_msg}")
+                time.sleep(1.5)
                 st.rerun()
                 break
                 
@@ -988,7 +994,7 @@ elif active_page == "Bug Explorer":
         findings = latest_scan.get('bugs', [])
         
         st.markdown(
-            f"""
+            clean_html(f"""
             <div style="background: white; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; margin-bottom: 24px; display:flex; justify-content:space-between; align-items:center;">
                 <div>
                     <span style="font-size:11px; text-transform:uppercase; color:#64748B; font-weight:700; letter-spacing:0.05em;">Loaded Scan Repository</span>
@@ -999,7 +1005,7 @@ elif active_page == "Bug Explorer":
                     <code style="font-weight:600; color:#4F46E5;">{scan_id}</code>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True
         )
         
@@ -1086,7 +1092,7 @@ elif active_page == "Pull Requests":
             summary = r.get('summary', 'No summary provided.')
             
             st.markdown(
-                f"""
+                clean_html(f"""
                 <div class="saas-card" style="margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <h4 style="margin:0; font-size:14px; font-weight:700; color:#0F172A;">{repo} (PR target: Issue #{issue})</h4>
@@ -1097,7 +1103,7 @@ elif active_page == "Pull Requests":
                         <span>At: {ts}</span>
                     </div>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True
             )
 
@@ -1136,7 +1142,7 @@ elif active_page == "History":
                     bugs_count = 0
                     
             st.markdown(
-                f"""
+                clean_html(f"""
                 <div class="saas-card" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <h4 style="margin:0; font-size:14.5px; font-weight:700; color:#0F172A;">{repo}</h4>
@@ -1147,7 +1153,7 @@ elif active_page == "History":
                         </div>
                     </div>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True
             )
             if st.button(f"Load findings: {scan_id}", key=f"load-hist-scan-{scan_id}"):

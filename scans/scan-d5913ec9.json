@@ -1,0 +1,21 @@
+{
+  "scan_id": "scan-d5913ec9",
+  "repository": "https://github.com/Reshal-006/rover-demo-repo",
+  "timestamp": "2026-07-16T13:47:57Z",
+  "status": "completed",
+  "severity": {
+    "critical": 3,
+    "high": 2,
+    "medium": 4,
+    "low": 3
+  },
+  "files_scanned": 5,
+  "ignored_files": 0,
+  "scan_duration_seconds": 10.46,
+  "language_breakdown": {
+    "py": 5
+  },
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

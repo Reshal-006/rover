@@ -4,9 +4,10 @@ This guide describes how to configure and run Rover on your local machine for de
 
 ## Prerequisites
 
-- **Python 3.11+**: Make sure Python is installed and configured on your path.
-- **Git**: Required for cloning repositories.
-- **Google Gemini API Key**: Required for code inspection and reasoning. Get your API key from [Google AI Studio](https://aistudio.google.com/).
+- **Python 3.11+**: Ensure Python is installed and configured on your PATH.
+- **Git**: Required for cloning target repositories.
+- **Google Gemini API Key**: Required for structured code generation. Obtain yours from [Google AI Studio](https://aistudio.google.com/).
+- **OpenRouter API Key (Optional)**: Used as an automatic fallback (e.g., DeepSeek v3) when Gemini rate-limits are hit. Get yours from [OpenRouter](https://openrouter.ai/).
 
 ---
 
@@ -20,7 +21,7 @@ This guide describes how to configure and run Rover on your local machine for de
 
 2. **Create and activate a virtual environment**:
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    source venv/bin/activate
    ```
 
@@ -29,7 +30,7 @@ This guide describes how to configure and run Rover on your local machine for de
    pip install -r requirements.txt
    ```
 
-4. **Copy the environment configuration**:
+4. **Copy the environment configuration template**:
    ```bash
    cp .env.example .env
    ```
@@ -38,13 +39,13 @@ This guide describes how to configure and run Rover on your local machine for de
 
 ## Authentication Configurations
 
-Rover supports two authentication methods: **Personal Access Token (classic)** and **GitHub App**.
+Rover supports two authentication methods: **Personal Access Token (classic fallback)** and **GitHub App (production-ready)**.
 
 ### Option A: Personal Access Token (PAT) - Quick Start
 
 Best for testing and local hacking:
-1. Go to your GitHub profile → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)**.
-2. Generate a new token classic with the `repo` scope and `write:discussion` scope.
+1. Go to your GitHub profile ➔ **Settings** ➔ **Developer settings** ➔ **Personal access tokens** ➔ **Tokens (classic)**.
+2. Generate a new classic token with the `repo` and `write:discussion` scopes.
 3. Edit your `.env` file:
    ```env
    USE_GITHUB_APP=false
@@ -54,13 +55,13 @@ Best for testing and local hacking:
 
 ### Option B: GitHub App Authentication (Recommended)
 
-1. Go to your GitHub settings page → **Developer settings** → **GitHub Apps** → **New GitHub App**.
+1. Go to your GitHub settings page ➔ **Developer settings** ➔ **GitHub Apps** ➔ **New GitHub App**.
 2. Set configuration values:
    - **Name**: `Rover-YourName`
    - **Homepage URL**: `http://localhost:8501`
    - **Callback URL**: `http://localhost:8000/github/callback`
    - **Webhook**: Enable (Checked)
-   - **Webhook URL**: Your public URL (e.g., from Ngrok: `https://xxxx.ngrok-free.app/webhook`)
+   - **Webhook URL**: Your public tunnel URL (e.g., from Ngrok: `https://xxxx.ngrok-free.app/webhook`)
    - **Webhook secret**: Choose a strong secret string.
 3. Grant **Repository permissions**:
    - **Contents**: Read & Write
@@ -76,10 +77,8 @@ Best for testing and local hacking:
    ```env
    USE_GITHUB_APP=true
    GITHUB_APP_ID=123456
-   GITHUB_PRIVATE_KEY=your_app_private_key.pem
-   GITHUB_WEBHOOK_SECRET=your_configured_webhook_secret
-   GITHUB_CLIENT_ID=your_app_client_id
-   GITHUB_CLIENT_SECRET=your_app_client_secret
+   GITHUB_PRIVATE_KEY=keys/your_app_private_key.pem
+   WEBHOOK_SECRET=your_configured_webhook_secret
    ```
 
 ---
@@ -90,7 +89,7 @@ Best for testing and local hacking:
 ```bash
 uvicorn api.main:app --reload --port 8000
 ```
-API documentation will be available at `http://localhost:8000/docs`.
+Interactive Swagger API documentation will be available at `http://localhost:8000/docs`.
 
 ### 2. Launch Streamlit Dashboard
 ```bash
