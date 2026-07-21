@@ -1,0 +1,19 @@
+{
+  "scan_id": "scan-be781488",
+  "repository": "https://github.com/Reshal-006/crypto-sentiment-eda",
+  "timestamp": "2026-07-21T14:57:52Z",
+  "status": "completed",
+  "severity": {
+    "medium": 2,
+    "low": 79
+  },
+  "files_scanned": 1,
+  "ignored_files": 0,
+  "scan_duration_seconds": 22.67,
+  "language_breakdown": {
+    "py": 1
+  },
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

@@ -21,7 +21,19 @@ from src.agent import run_agent_for_issue
 from src.scanner import scan_repository, validate_repository_url
 from src.storage import ScanStore
 from src.github_client import create_issue_from_scan
-from src.github_auth import save_installation_id, load_installation_id
+import src.github_auth as github_auth
+
+def load_installation_id() -> int | None:
+    return github_auth.load_installation_id()
+
+def save_installation_id(installation_id: int):
+    return github_auth.save_installation_id(installation_id)
+
+def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
+    return github_auth.check_repository_access(installation_id, repo_full_name)
+
+def get_repo_installation(owner: str, repo: str) -> int | None:
+    return github_auth.get_repo_installation(owner, repo)
 
 load_dotenv()
 app = FastAPI(title='Rover', version='1.0')
@@ -35,7 +47,9 @@ def verify_github_signature(payload: bytes, sig_header: str) -> bool:
     We recompute the signature and compare with hmac.compare_digest
     to prevent timing attacks.
     '''
-    secret = os.getenv('WEBHOOK_SECRET', '')
+    secret = os.getenv('WEBHOOK_SECRET', '').strip()
+    if not secret or not sig_header:
+        return False
     expected = 'sha256=' + hmac.new(
         secret.encode(),
         payload,
@@ -61,7 +75,7 @@ async def github_callback(installation_id: int, setup_action: str = None):
         raise HTTPException(status_code=400, detail="Missing installation_id")
 
     try:
-        save_installation_id(installation_id)
+        github_auth.save_installation_id(installation_id)
         logger.info("GitHub App installation callback successful. Saved installation_id: %s", installation_id)
     except Exception as e:
         logger.error("Failed to save installation ID %s: %s", installation_id, e)
@@ -81,10 +95,17 @@ async def trigger_scan(payload: dict, background_tasks: BackgroundTasks):
     USE_GITHUB_APP = os.getenv('USE_GITHUB_APP', 'false').lower() == 'true'
     if USE_GITHUB_APP:
         repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
-        installation_id = load_installation_id()
+        parts = repo_name.split('/')
+        owner, repo = parts[0], parts[1] if len(parts) == 2 else ("", repo_name)
+        
+        installation_id = payload.get('installation_id')
         if not installation_id:
-            raise HTTPException(status_code=400, detail="USE_GITHUB_APP is true but no GitHub App installation ID is stored.")
-        from src.github_auth import check_repository_access
+            installation_id = load_installation_id()
+        if not installation_id and owner and repo:
+            installation_id = get_repo_installation(owner, repo)
+            
+        if not installation_id:
+            raise HTTPException(status_code=400, detail="USE_GITHUB_APP is true but no GitHub App installation ID could be resolved.")
         if not check_repository_access(installation_id, repo_name):
             raise HTTPException(status_code=403, detail=f"Access Denied: GitHub App does not have access to repository '{repo_name}' or is not installed.")
 
@@ -152,8 +173,21 @@ async def fix_bug(bug_id: str, payload: dict, background_tasks: BackgroundTasks)
     if not validate_repository_url(repository_url):
         raise HTTPException(status_code=400, detail='Invalid GitHub repository URL')
 
+    repo_full_name = repository_url.replace('https://github.com/', '').rstrip('/')
+    parts = repo_full_name.split('/')
+    owner, repo = parts[0], parts[1] if len(parts) == 2 else ("", repo_full_name)
+
+    installation_id = payload.get('installation_id')
+    if not installation_id and owner and repo:
+        installation_id = github_auth.get_repo_installation(owner, repo)
+
     issue_number = create_issue_from_scan(repository_url, bug_id, payload.get('title', 'Rover bug report'), payload.get('description', ''))
-    background_tasks.add_task(run_agent_for_issue, repository_url.replace('https://github.com/', ''), int(issue_number))
+    background_tasks.add_task(
+        run_agent_for_issue,
+        repo_full_name,
+        int(issue_number),
+        installation_id=installation_id
+    )
     return {'status': 'issue-created', 'issue_number': issue_number}
 
 
@@ -178,6 +212,7 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
 
     data   = json.loads(payload)
     action = data.get('action', '')
+    installation_id = data.get('installation', {}).get('id')
 
     # Only trigger when the rover label is added to an Issue
     if action == 'labeled':
@@ -190,8 +225,9 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(
                 run_agent_for_issue,
                 repo_name,
-                issue_number
+                issue_number,
+                installation_id=installation_id
             )
-            return {'status': 'agent triggered', 'issue': issue_number}
+            return {'status': 'agent triggered', 'issue': issue_number, 'installation_id': installation_id}
 
     return {'status': 'ignored', 'action': action}

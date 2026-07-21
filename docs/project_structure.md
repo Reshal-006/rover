@@ -15,7 +15,7 @@ rover/
 │   ├── app.py             # Main UI loop, tabs configuration, and custom CSS
 │   └── components/        # Reusable dashboard widgets
 ├── docs/                  # Project documentation guides
-│   ├── adr/               # Architecture Decision Records (ADRs 001 - 012)
+│   ├── adr/               # Architecture Decision Records (ADRs 001 - 003)
 │   ├── api.md             # REST API specifications
 │   ├── architecture.md    # System architecture flowcharts (Mermaid)
 │   ├── deployment.md      # Docker, Render, and Streamlit Cloud configuration

@@ -1,0 +1,21 @@
+{
+  "scan_id": "scan-5babaf24",
+  "repository": "https://github.com/reshal-006/rover",
+  "timestamp": "2026-07-20T12:41:23Z",
+  "status": "completed",
+  "severity": {
+    "critical": 1,
+    "high": 101,
+    "medium": 30,
+    "low": 221
+  },
+  "files_scanned": 23,
+  "ignored_files": 0,
+  "scan_duration_seconds": 63.46,
+  "language_breakdown": {
+    "py": 23
+  },
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

@@ -480,3 +480,52 @@ def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
     except Exception as e:
         logger.error("Exception checking repository access for %s: %s", repo_full_name, e)
         return False
+
+
+def get_repo_installation(owner: str, repo: str) -> int | None:
+    """
+    Queries GET /repos/{owner}/{repo}/installation using the App JWT to dynamically
+    resolve the installation ID for a given repository.
+    """
+    try:
+        jwt_token = create_app_jwt()
+    except Exception as e:
+        logger.warning("Failed to create App JWT for repo installation lookup: %s", e)
+        return None
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/installation"
+    headers = {
+        "Authorization": f"Bearer {jwt_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            inst_id = data.get("id")
+            if inst_id:
+                logger.info("Resolved installation ID %s dynamically for %s/%s", inst_id, owner, repo)
+                return int(inst_id)
+        elif response.status_code == 404:
+            logger.warning("GitHub App is not installed on repository %s/%s", owner, repo)
+        else:
+            logger.warning("Dynamic installation lookup returned status %s for %s/%s", response.status_code, owner, repo)
+    except Exception as e:
+        logger.warning("Error during dynamic installation lookup for %s/%s: %s", owner, repo, e)
+    return None
+
+
+def sanitize_text(text: str) -> str:
+    """
+    Scrubs sensitive access tokens and credentials from log strings.
+    """
+    if not isinstance(text, str):
+        return text
+    import re
+    text = re.sub(r'x-access-token:[^@]+@', 'x-access-token:[REDACTED]@', text)
+    text = re.sub(r'ghp_[A-Za-z0-9_]+', 'ghp_[REDACTED]', text)
+    text = re.sub(r'ghs_[A-Za-z0-9_]+', 'ghs_[REDACTED]', text)
+    return text
+

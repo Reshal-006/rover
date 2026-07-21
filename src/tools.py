@@ -12,17 +12,18 @@ import sys
 WORKSPACE = 'workspace'
 
 
-def read_file(filepath: str) -> str:
+def read_file(filepath: str, workspace_dir: str = WORKSPACE) -> str:
     """
     Read the contents of a file from the cloned workspace repo.
 
     Args:
         filepath: path relative to the repo root, e.g. 'src/auth.py'
+        workspace_dir: target workspace folder, defaults to 'workspace'
 
     Returns:
         The file contents as a string, or an error message.
     """
-    full_path = os.path.join(WORKSPACE, filepath)
+    full_path = os.path.join(workspace_dir, filepath)
 
     if not os.path.exists(full_path):
         return f'ERROR: File not found: {filepath}'
@@ -37,13 +38,14 @@ def read_file(filepath: str) -> str:
     return content
 
 
-def search_code(query: str, file_extension: str = '.py') -> list:
+def search_code(query: str, file_extension: str = '.py', workspace_dir: str = WORKSPACE) -> list:
     """
     Search for a keyword across all files in the workspace.
 
     Args:
         query: the keyword to search for, e.g. 'password' or 'KeyError'
         file_extension: which file types to search, default .py
+        workspace_dir: target workspace folder, defaults to 'workspace'
 
     Returns:
         List of dicts with 'file', 'line' (number), 'content' (the line).
@@ -51,7 +53,7 @@ def search_code(query: str, file_extension: str = '.py') -> list:
     """
     matches = []
 
-    for root, dirs, files in os.walk(WORKSPACE):
+    for root, dirs, files in os.walk(workspace_dir):
         # Skip folders that are not source code
         dirs[:] = [d for d in dirs
                    if d not in ['.git', '__pycache__', '.venv', 'node_modules']]
@@ -63,8 +65,9 @@ def search_code(query: str, file_extension: str = '.py') -> list:
                 with open(filepath, 'r', errors='ignore') as f:
                     for line_num, line in enumerate(f, start=1):
                         if query.lower() in line.lower():
+                            rel_file = os.path.relpath(filepath, workspace_dir)
                             matches.append({
-                                'file': filepath.replace(WORKSPACE + '/', ''),
+                                'file': rel_file,
                                 'line': line_num,
                                 'content': line.strip()
                             })
@@ -72,7 +75,7 @@ def search_code(query: str, file_extension: str = '.py') -> list:
     return matches[:20]  # cap at 20 to keep the model prompt manageable
 
 
-def edit_file(filepath: str, new_content: str) -> str:
+def edit_file(filepath: str, new_content: str, workspace_dir: str = WORKSPACE) -> str:
     """
     Write new content to a file in the workspace.
     Creates the file and any missing parent folders if needed.
@@ -80,11 +83,12 @@ def edit_file(filepath: str, new_content: str) -> str:
     Args:
         filepath: path relative to repo root, e.g. 'tests/test_auth.py'
         new_content: the complete content to write to the file
+        workspace_dir: target workspace folder, defaults to 'workspace'
 
     Returns:
         A confirmation string.
     """
-    full_path = os.path.join(WORKSPACE, filepath)
+    full_path = os.path.join(workspace_dir, filepath)
 
     # Create parent directories if they do not exist
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -95,13 +99,14 @@ def edit_file(filepath: str, new_content: str) -> str:
     return f'OK: wrote {len(new_content)} characters to {filepath}'
 
 
-def run_tests(test_file: str = None) -> dict:
+def run_tests(test_file: str = None, workspace_dir: str = WORKSPACE) -> dict:
     """
     Run pytest in the workspace directory.
 
     Args:
         test_file: optional path to a specific test file.
                    If None, runs the full test suite.
+        workspace_dir: target workspace folder, defaults to 'workspace'
 
     Returns:
         Dict with:
@@ -118,7 +123,7 @@ def run_tests(test_file: str = None) -> dict:
         cmd,
         capture_output=True,
         text=True,
-        cwd=WORKSPACE   # run pytest INSIDE the cloned repo
+        cwd=workspace_dir   # run pytest INSIDE the cloned repo
     )
 
     return {

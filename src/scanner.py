@@ -40,17 +40,23 @@ def clone_repository(repository_url: str, destination: str | None = None) -> str
     USE_GITHUB_APP = os.getenv('USE_GITHUB_APP', 'false').lower() == 'true'
     url = repository_url
     if USE_GITHUB_APP:
-        from src.github_auth import load_installation_id, get_installation_token
-        installation_id = load_installation_id()
+        from src.github_auth import load_installation_id, get_installation_token, get_repo_installation
+        repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
+        parts = repo_name.split('/')
+        installation_id = None
+        if len(parts) == 2:
+            installation_id = get_repo_installation(parts[0], parts[1])
+        if not installation_id:
+            installation_id = load_installation_id()
+
         if installation_id:
-            repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
             try:
                 token = get_installation_token(installation_id)
                 url = f'https://x-access-token:{token}@github.com/{repo_name}.git'
             except Exception as e:
                 raise RuntimeError(f"Failed to retrieve installation token for repository scanning: {e}")
         else:
-            raise RuntimeError("USE_GITHUB_APP is true but no GitHub App installation ID is stored.")
+            raise RuntimeError("USE_GITHUB_APP is true but no GitHub App installation ID could be resolved for repository.")
     else:
         GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '').strip()
         if GITHUB_TOKEN:

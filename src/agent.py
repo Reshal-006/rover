@@ -53,7 +53,11 @@ def clean_json_response(json_str: str) -> str:
         clean = clean[:-3]
     return clean.strip()
 
-def run_agent(bug_report: str) -> dict:
+ROVER_BOT_NAME = os.getenv("ROVER_BOT_NAME", "Rover [bot]").strip()
+ROVER_BOT_EMAIL = os.getenv("ROVER_BOT_EMAIL", "rover-bot@users.noreply.github.com").strip()
+
+
+def run_agent(bug_report: str, workspace_dir: str = "workspace") -> dict:
     """
     Run the optimized Rover agent on a bug report.
     Gathers local context via AST indexing and matching, then resolves using 1-2 structured LLM calls.
@@ -66,10 +70,10 @@ def run_agent(bug_report: str) -> dict:
         - status: success or failed
     """
     start_time = time.time()
-    logger.info("Starting optimized bug-fixing agent...")
+    logger.info("Starting optimized bug-fixing agent in workspace: %s...", workspace_dir)
     
     # 1. Local Codebase Indexing
-    indexer = RepositoryIndexer("workspace")
+    indexer = RepositoryIndexer(workspace_dir)
     index = indexer.get_index()
     
     # 2. Extract potential keywords/symbols and trace paths from the bug report
@@ -131,7 +135,7 @@ def run_agent(bug_report: str) -> dict:
         for rel_path, data in index.items():
             score = 0
             try:
-                full_path = os.path.join("workspace", rel_path)
+                full_path = os.path.join(workspace_dir, rel_path)
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
                 for kw in sorted_tokens[:5]:
@@ -171,7 +175,7 @@ def run_agent(bug_report: str) -> dict:
     for rel_path, score in sorted_matched:
         if len(context_str) >= character_budget:
             break
-        content = read_file(rel_path)
+        content = read_file(rel_path, workspace_dir=workspace_dir)
         if not content.startswith("ERROR:"):
             context_str += f"\n\n### File: {rel_path}\n"
             context_str += f"```python\n{content}\n```\n"
@@ -216,15 +220,15 @@ You must output a JSON object containing:
         }
         
     # 6. Apply patch and test
-    logger.info("Applying patch to %s...", res_data["filepath"])
-    edit_file(res_data["filepath"], res_data["patch"])
+    logger.info("Applying patch to %s in workspace %s...", res_data["filepath"], workspace_dir)
+    edit_file(res_data["filepath"], res_data["patch"], workspace_dir=workspace_dir)
     
-    logger.info("Writing test to %s...", res_data["test_filepath"])
-    edit_file(res_data["test_filepath"], res_data["tests"])
+    logger.info("Writing test to %s in workspace %s...", res_data["test_filepath"], workspace_dir)
+    edit_file(res_data["test_filepath"], res_data["tests"], workspace_dir=workspace_dir)
     
     # 7. Validate tests
-    logger.info("Running pytest validation...")
-    test_res = run_tests(res_data["test_filepath"])
+    logger.info("Running pytest validation in workspace %s...", workspace_dir)
+    test_res = run_tests(res_data["test_filepath"], workspace_dir=workspace_dir)
     
     # 8. Optional Review Loop (Call 2)
     if not test_res["passed"]:
@@ -265,14 +269,14 @@ Please analyze the test failure and generate a corrected fix. You must output a 
             logger.info("Review LLM call succeeded in %.2fs.", time.time() - review_start)
             
             # Re-apply corrected patch
-            logger.info("Applying corrected patch to %s...", res_data["filepath"])
-            edit_file(res_data["filepath"], res_data["patch"])
-            logger.info("Writing corrected test to %s...", res_data["test_filepath"])
-            edit_file(res_data["test_filepath"], res_data["tests"])
+            logger.info("Applying corrected patch to %s in workspace %s...", res_data["filepath"], workspace_dir)
+            edit_file(res_data["filepath"], res_data["patch"], workspace_dir=workspace_dir)
+            logger.info("Writing corrected test to %s in workspace %s...", res_data["test_filepath"], workspace_dir)
+            edit_file(res_data["test_filepath"], res_data["tests"], workspace_dir=workspace_dir)
             
             # Validate again
-            logger.info("Re-running pytest validation...")
-            test_res = run_tests(res_data["test_filepath"])
+            logger.info("Re-running pytest validation in workspace %s...", workspace_dir)
+            test_res = run_tests(res_data["test_filepath"], workspace_dir=workspace_dir)
         except Exception as e:
             logger.error("Failed in review loop call: %s", e)
             
@@ -324,32 +328,50 @@ def generate_unique_branch_name(ctx: RepositoryContext, issue_number: int) -> st
         if not remote_branch_exists(ctx, branch_name):
             return branch_name
 
-def run_agent_for_issue(repo_name: str, issue_number: int):
+def run_agent_for_issue(
+    repo_name: str,
+    issue_number: int,
+    installation_id: int | None = None,
+    workspace_dir: str | None = None
+):
     '''Full agent run triggered by a real GitHub Issue.'''
     start = time.time()
     
+    parts = repo_name.strip("/").split("/")
+    if len(parts) == 2:
+        owner, repo = parts[0], parts[1]
+    else:
+        owner, repo = "", repo_name
+
+    if not workspace_dir:
+        workspace_dir = f"workspaces/{owner}_{repo}" if owner else f"workspaces/{repo}"
+
+    # Resolve installation ID dynamically if not provided
+    if not installation_id and owner and repo:
+        from src.github_auth import get_repo_installation
+        installation_id = get_repo_installation(owner, repo)
+
+    if not installation_id:
+        installation_id = load_installation_id()
+
+    ctx = RepositoryContext.from_repo_name(repo_name, installation_id)
+
     # Check resolution cache first
     cached = load_resolution_cache(repo_name, issue_number)
     if cached:
-        inst_id = load_installation_id()
-        ctx = RepositoryContext.from_repo_name(repo_name, inst_id)
-        # Post comment and log run directly using cached data
         post_comment(ctx, issue_number, f"## Rover Report (Loaded from Cache)\n\n{cached['summary']}")
         log_run(repo_name, issue_number, cached['summary'], 0.1)
         return
-        
-    inst_id = load_installation_id()
-    ctx = RepositoryContext.from_repo_name(repo_name, inst_id)
-    
-    # 1. Clone repository
-    clone_repo(ctx)
+
+    # 1. Clone repository into isolated workspace
+    clone_repo(ctx, workspace_dir=workspace_dir)
     
     # Ensure local workspace is clean and starts from the repository's default branch
-    logger.info("Ensuring local workspace starts from repository default branch: %s", ctx.default_branch)
-    subprocess.run(['git', 'fetch', 'origin'], cwd='workspace', check=False)
-    subprocess.run(['git', 'checkout', '-f', ctx.default_branch], cwd='workspace', check=False)
-    subprocess.run(['git', 'reset', '--hard', f'origin/{ctx.default_branch}'], cwd='workspace', check=False)
-    subprocess.run(['git', 'clean', '-fdx'], cwd='workspace', check=False)
+    logger.info("Ensuring local workspace %s starts from default branch: %s", workspace_dir, ctx.default_branch)
+    subprocess.run(['git', 'fetch', 'origin'], cwd=workspace_dir, check=False)
+    subprocess.run(['git', 'checkout', '-f', ctx.default_branch], cwd=workspace_dir, check=False)
+    subprocess.run(['git', 'reset', '--hard', f'origin/{ctx.default_branch}'], cwd=workspace_dir, check=False)
+    subprocess.run(['git', 'clean', '-fdx'], cwd=workspace_dir, check=False)
     
     # 2. Create unique branch on remote
     branch_name = generate_unique_branch_name(ctx, issue_number)
@@ -361,15 +383,15 @@ def run_agent_for_issue(repo_name: str, issue_number: int):
         logger.warning("Could not create remote branch %s: %s", branch_name, e)
         
     # 3. Checkout branch locally, deleting any stale local branch first
-    subprocess.run(['git', 'branch', '-D', branch_name], cwd='workspace', check=False)
-    logger.info("Checking out local branch: %s", branch_name)
-    subprocess.run(['git', 'checkout', '-b', branch_name], cwd='workspace', check=False)
+    subprocess.run(['git', 'branch', '-D', branch_name], cwd=workspace_dir, check=False)
+    logger.info("Checking out local branch: %s in %s", branch_name, workspace_dir)
+    subprocess.run(['git', 'checkout', '-b', branch_name], cwd=workspace_dir, check=False)
     
     # 4. Run agent reasoning loop
     bug_report = get_issue_text(ctx, issue_number)
-    logger.info("Running agent on Issue #%s...", issue_number)
+    logger.info("Running agent on Issue #%s in workspace %s...", issue_number, workspace_dir)
     
-    result = run_agent(bug_report)
+    result = run_agent(bug_report, workspace_dir=workspace_dir)
     summary = result["summary"]
     
     # Save to cache if successful
@@ -377,16 +399,16 @@ def run_agent_for_issue(repo_name: str, issue_number: int):
         save_resolution_cache(repo_name, issue_number, result)
         
     # 5. Check if files were modified and commit/push/PR
-    status_res = subprocess.run(['git', 'status', '--porcelain'], cwd='workspace', capture_output=True, text=True)
+    status_res = subprocess.run(['git', 'status', '--porcelain'], cwd=workspace_dir, capture_output=True, text=True)
     if status_res.stdout.strip():
         logger.info("Modifications detected. Committing and pushing changes...")
         # Configure user identity locally if not set
-        subprocess.run(['git', 'config', 'user.name', 'Rover Agent'], cwd='workspace', check=False)
-        subprocess.run(['git', 'config', 'user.email', 'rover@internal.ai'], cwd='workspace', check=False)
+        subprocess.run(['git', 'config', 'user.name', ROVER_BOT_NAME], cwd=workspace_dir, check=False)
+        subprocess.run(['git', 'config', 'user.email', ROVER_BOT_EMAIL], cwd=workspace_dir, check=False)
         
         # Commit
-        subprocess.run(['git', 'add', '-A'], cwd='workspace', check=False)
-        subprocess.run(['git', 'commit', '-m', result["commit_message"]], cwd='workspace', check=False)
+        subprocess.run(['git', 'add', '-A'], cwd=workspace_dir, check=False)
+        subprocess.run(['git', 'commit', '-m', result["commit_message"]], cwd=workspace_dir, check=False)
         
         # Push retry loop
         max_push_attempts = 3
@@ -397,7 +419,7 @@ def run_agent_for_issue(repo_name: str, issue_number: int):
         for attempt in range(1, max_push_attempts + 1):
             try:
                 logger.info("Pushing commits to remote branch: %s (attempt %d/%d)", current_branch, attempt, max_push_attempts)
-                push_commits(ctx, current_branch)
+                push_commits(ctx, current_branch, workspace_dir=workspace_dir)
                 final_branch_pushed = current_branch
                 
                 # Create Pull Request
@@ -429,7 +451,7 @@ def run_agent_for_issue(repo_name: str, issue_number: int):
                     logger.warning("Failed to create remote branch %s: %s", current_branch, cb_err)
                 
                 # Rename local branch to match the new remote branch name
-                subprocess.run(['git', 'branch', '-m', old_branch, current_branch], cwd='workspace', check=False)
+                subprocess.run(['git', 'branch', '-m', old_branch, current_branch], cwd=workspace_dir, check=False)
                 logger.info("Renamed local branch from %s to %s to retry push", old_branch, current_branch)
                 
         logger.info("Final branch pushed: %s", final_branch_pushed)

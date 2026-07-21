@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Unused Variable",
+    "description": "The variable 'value' is defined but never used within the scope of the file.",
+    "severity": "low",
+    "confidence": 1.0,
+    "category": "Maintainability",
+    "filepath": "src/sample.py",
+    "line_number": 1,
+    "code_snippet": "value = 42",
+    "reasoning": "Defining a variable that is never read or used contributes to technical debt and makes the code harder to maintain.",
+    "suggested_fix": "Remove the unused variable 'value' if it serves no purpose in the application.",
+    "impact": "low",
+    "file": "src/sample.py"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "name": "rover-monorepo",
+  "version": "2.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm --prefix apps/web run dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:backend": "venv/bin/uvicorn apps.backend.app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "build:web": "npm --prefix apps/web run build",
+    "preview:web": "npm --prefix apps/web run preview",
+    "lint": "npm --prefix apps/web run lint"
+
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

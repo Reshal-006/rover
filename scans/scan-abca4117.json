@@ -1,0 +1,21 @@
+{
+  "scan_id": "scan-abca4117",
+  "repository": "https://github.com/thinkapoorv/SafeSched-Intelligent_Deadlock_Aware_Scheduling_System",
+  "timestamp": "2026-07-20T14:22:19Z",
+  "status": "completed",
+  "severity": {
+    "critical": 1,
+    "high": 6,
+    "medium": 36,
+    "low": 575
+  },
+  "files_scanned": 42,
+  "ignored_files": 0,
+  "scan_duration_seconds": 131.94,
+  "language_breakdown": {
+    "py": 42
+  },
+  "phase": "completed",
+  "progress": 100,
+  "current_file": ""
+}

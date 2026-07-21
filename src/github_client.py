@@ -62,19 +62,22 @@ def get_github_client(installation_id: int | None = None) -> Github:
     if USE_GITHUB_APP:
         if not installation_id:
             installation_id = load_installation_id()
-        if not installation_id:
-            raise RepositoryNotInstalled("USE_GITHUB_APP is true but no installation ID is provided or stored.")
-        return authenticated_github_client(installation_id)
-    else:
-        token = os.getenv("GITHUB_TOKEN", "").strip()
-        if not token:
-            raise AuthenticationFailed("GITHUB_TOKEN is not configured for PAT authentication fallback.")
+        if installation_id:
+            try:
+                return authenticated_github_client(installation_id)
+            except Exception as e:
+                logger.warning("GitHub App authentication failed for installation %s: %s. Falling back to PAT token...", installation_id, e)
+
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
         try:
             from github import Auth
             auth = Auth.Token(token)
             return Github(auth=auth)
         except (ImportError, AttributeError):
             return Github(token)
+            
+    raise RepositoryNotInstalled("No valid GitHub App installation or GITHUB_TOKEN configured.")
 
 
 # --- Repository Context ---
@@ -248,21 +251,26 @@ def read_repository(ctx: RepositoryContext) -> dict:
     }
 
 
-def clone_repo(ctx_or_name):
+def clone_repo(ctx_or_name, workspace_dir: str | None = None):
     """
-    Clones the repository defined in context. Accepts either RepositoryContext or a repo_name string.
+    Clones the repository defined in context into an isolated workspace directory.
+    Accepts either RepositoryContext or a repo_name string.
     """
+    from src.github_auth import sanitize_text
     if isinstance(ctx_or_name, RepositoryContext):
         ctx = ctx_or_name
     else:
         inst_id = load_installation_id()
         ctx = RepositoryContext.from_repo_name(ctx_or_name, inst_id)
         
+    if not workspace_dir:
+        workspace_dir = f"workspaces/{ctx.owner}_{ctx.repo}"
+
     USE_GITHUB_APP = os.getenv('USE_GITHUB_APP', 'false').lower() == 'true'
     auth_method = "GitHub App" if USE_GITHUB_APP else "PAT"
     logger.info(
-        "Cloning repository | Auth: %s | Installation: %s | Repo: %s/%s",
-        auth_method, ctx.installation_id, ctx.owner, ctx.repo
+        "Cloning repository | Auth: %s | Installation: %s | Repo: %s/%s | Destination: %s",
+        auth_method, ctx.installation_id, ctx.owner, ctx.repo, workspace_dir
     )
     
     if USE_GITHUB_APP:
@@ -279,29 +287,35 @@ def clone_repo(ctx_or_name):
             raise AuthenticationFailed('GITHUB_TOKEN is not set. Cannot clone repository.')
         url = f'https://{token}@github.com/{ctx.owner}/{ctx.repo}.git'
 
-    if os.path.exists('workspace'):
+    os.makedirs(os.path.dirname(os.path.abspath(workspace_dir)), exist_ok=True)
+
+    if os.path.exists(workspace_dir) and os.path.exists(os.path.join(workspace_dir, '.git')):
         if USE_GITHUB_APP:
             try:
-                subprocess.run(['git', 'remote', 'set-url', 'origin', url], cwd='workspace', check=True)
+                subprocess.run(['git', 'remote', 'set-url', 'origin', url], cwd=workspace_dir, check=True)
                 logger.debug("Successfully updated origin remote URL in workspace.")
             except Exception as e:
-                logger.warning("Failed to update remote URL in workspace: %s", e)
-        logger.info("Running git pull in existing workspace...")
-        subprocess.run(['git', 'pull'], cwd='workspace', check=False)
+                logger.warning("Failed to update remote URL in workspace: %s", sanitize_text(str(e)))
+        logger.info("Running git pull in existing workspace %s...", workspace_dir)
+        subprocess.run(['git', 'pull'], cwd=workspace_dir, check=False)
     else:
-        logger.info("Cloning repository into workspace...")
-        subprocess.run(['git', 'clone', url, 'workspace'], check=True)
+        logger.info("Cloning repository into %s...", workspace_dir)
+        subprocess.run(['git', 'clone', url, workspace_dir], check=True)
 
 
-def push_commits(ctx: RepositoryContext, branch_name: str):
+def push_commits(ctx: RepositoryContext, branch_name: str, workspace_dir: str | None = None):
     """
-    Pushes local branch changes to remote origin.
+    Pushes local branch changes from workspace_dir to remote origin.
     """
+    from src.github_auth import sanitize_text
+    if not workspace_dir:
+        workspace_dir = f"workspaces/{ctx.owner}_{ctx.repo}"
+
     USE_GITHUB_APP = os.getenv('USE_GITHUB_APP', 'false').lower() == 'true'
     auth_method = "GitHub App" if USE_GITHUB_APP else "PAT"
     logger.info(
-        "Pushing commits | Auth: %s | Installation: %s | Repo: %s/%s | Branch: %s",
-        auth_method, ctx.installation_id, ctx.owner, ctx.repo, branch_name
+        "Pushing commits | Auth: %s | Installation: %s | Repo: %s/%s | Branch: %s | Dir: %s",
+        auth_method, ctx.installation_id, ctx.owner, ctx.repo, branch_name, workspace_dir
     )
     
     if USE_GITHUB_APP:
@@ -320,14 +334,15 @@ def push_commits(ctx: RepositoryContext, branch_name: str):
         url = f'https://{token}@github.com/{ctx.owner}/{ctx.repo}.git'
 
     try:
-        subprocess.run(['git', 'remote', 'set-url', 'origin', url], cwd='workspace', check=True)
+        subprocess.run(['git', 'remote', 'set-url', 'origin', url], cwd=workspace_dir, check=True)
     except Exception as e:
-        logger.warning("Failed to update remote URL: %s", e)
+        logger.warning("Failed to update remote URL: %s", sanitize_text(str(e)))
 
-    res = subprocess.run(['git', 'push', 'origin', branch_name], cwd='workspace', capture_output=True, text=True)
+    res = subprocess.run(['git', 'push', 'origin', branch_name], cwd=workspace_dir, capture_output=True, text=True)
     if res.returncode != 0:
-        logger.error("Git push failed: %s", res.stderr)
-        raise GitHubClientError(f"Git push failed: {res.stderr}")
+        clean_err = sanitize_text(res.stderr)
+        logger.error("Git push failed: %s", clean_err)
+        raise GitHubClientError(f"Git push failed: {clean_err}")
     logger.info("Successfully pushed branch %s to origin.", branch_name)
 
 
@@ -480,9 +495,9 @@ def get_issue_text(ctx_or_name, issue_number: int) -> str:
     return _get(ctx)
 
 
-def create_issue_from_scan(repository_url: str, bug_id: str, title: str, description: str, **kwargs):
+def create_issue_from_scan(repository_url: str, bug_id: str, title: str, description: str, installation_id: int | None = None, **kwargs):
     repo_name = repository_url.replace('https://github.com/', '').rstrip('/')
-    inst_id = load_installation_id()
+    inst_id = installation_id or load_installation_id()
     ctx = RepositoryContext.from_repo_name(repo_name, inst_id)
     
     @with_github_retry

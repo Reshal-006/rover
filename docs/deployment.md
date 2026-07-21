@@ -18,6 +18,8 @@ Ensure the following variables are set in your production environments:
 | `GITHUB_PRIVATE_KEY` | Yes | Raw private key PEM file content or reference path |
 | `WEBHOOK_SECRET` | Yes | Your webhook secret |
 | `DASHBOARD_URL` | Yes | Public Streamlit dashboard URL |
+| `ROVER_BOT_NAME` | No | Git author name for auto-commits (default: `Rover Agent`) |
+| `ROVER_BOT_EMAIL` | No | Git author email for auto-commits (default: `rover@internal.ai`) |
 
 ---
 

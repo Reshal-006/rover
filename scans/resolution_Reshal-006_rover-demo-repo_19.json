@@ -1,0 +1,7 @@
+{
+  "summary": "### Diagnosis\nThe calculate_discount function performs a division operation directly on the 'total' variable. If 'total' is zero, a ZeroDivisionError occurs. Added a check to handle cases where total is zero, returning 0.0 or an appropriate default value to prevent the crash.\n\n### Fix Applied\n- Modified: `payment.py`\n- Test file: `tests/test_payment.py`\n\n### Verification Status (COMPLETED)\n```text\nAll tests passed successfully!\n```",
+  "commit_message": "fix: prevent ZeroDivisionError in calculate_discount",
+  "pr_title": "Fix ZeroDivisionError in calculate_discount",
+  "pr_body": "This PR addresses the potential ZeroDivisionError in the `calculate_discount` function by adding a check for `total == 0`. If the total is zero, the function now returns 0.0 instead of raising an exception.",
+  "status": "completed"
+}
