@@ -102,7 +102,7 @@ sequenceDiagram
 
 Rover abstracts LLM providers in `src/llm.py`:
 * **Primary Model**: `gemini-3.1-flash-lite` or `gemini-2.5-flash`.
-* **Fallback Model**: `deepseek/deepseek-chat:free` (via OpenRouter).
+* **Fallback Model**: `qwen/qwen3-coder:free` (via OpenRouter).
 * If a Gemini call hits a rate limit or `RESOURCE_EXHAUSTED` error, Rover backs off and redirects requests to OpenRouter automatically.
 
 ---

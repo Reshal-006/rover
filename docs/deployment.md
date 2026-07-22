@@ -12,7 +12,7 @@ Ensure the following variables are set in your production environments:
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Yes | Google AI Studio Key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API Key for fallbacks |
-| `OPENROUTER_MODEL` | No | Fallback model ID (default: `deepseek/deepseek-chat:free`) |
+| `OPENROUTER_MODEL` | No | Fallback model ID (default: `qwen/qwen3-coder:free`) |
 | `USE_GITHUB_APP` | Yes | Set to `true` |
 | `GITHUB_APP_ID` | Yes | Your GitHub App ID |
 | `GITHUB_PRIVATE_KEY` | Yes | Raw private key PEM file content or reference path |

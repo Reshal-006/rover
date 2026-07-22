@@ -36,7 +36,7 @@ def get_active_model_config() -> tuple[str, str]:
         api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
         if not api_key:
             raise RuntimeError('OPENROUTER_API_KEY is not set. Add it to the .env file at the repo root.')
-        model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
+        model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
         return 'openrouter', model
 
     api_key = os.getenv('GEMINI_API_KEY', '').strip()
@@ -249,7 +249,7 @@ def call_gemini(contents: list) -> object:
     if provider == 'gemini' and time.time() < _gemini_backoff_until:
         if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
             logger.info('Gemini is in backoff; using OpenRouter fallback.')
-            return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+            return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
 
     try:
         if provider == 'openrouter':
@@ -278,7 +278,7 @@ def call_gemini(contents: list) -> object:
             # Immediately use OpenRouter if configured.
             if os.getenv('OPENROUTER_API_KEY', '').strip() and os.getenv('OPENROUTER_MODEL', '').strip():
                 logger.info('Gemini failed (%s); falling back to OpenRouter.', exc)
-                return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
+                return _call_openrouter_api(contents, os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free'), SYSTEM_PROMPT, [ROVER_TOOLS])
 
         # Otherwise, re-raise the original exception.
         raise
@@ -328,7 +328,7 @@ def call_llm_structured(prompt: str, response_schema) -> str:
     
     if use_openrouter:
         api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
-        openrouter_model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
+        openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
         if api_key:
             try:
                 from openai import OpenAI
@@ -383,7 +383,7 @@ def call_llm_structured(prompt: str, response_schema) -> str:
             
             # Retry immediately with OpenRouter if available
             api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
-            openrouter_model = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat:free').strip()
+            openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen3-coder:free').strip()
             if api_key:
                 try:
                     from openai import OpenAI
