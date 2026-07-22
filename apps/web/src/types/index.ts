@@ -50,5 +50,7 @@ export interface Repository {
   full_name: string;
   default_branch: string;
   is_private: boolean;
+  name?: string;
+  language?: string;
   last_scanned_at?: string;
 }

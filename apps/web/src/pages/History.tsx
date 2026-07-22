@@ -25,8 +25,8 @@ export const History: React.FC = () => {
     title: h.bugs > 0 ? `Scan Discovered ${h.bugs} Vulnerabilities` : 'Clean Scan Completed',
     description: `AST symbol trees and syntax graphs built. Telemetry logged. Duration: ${h.duration}`,
     date: h.date,
-    type: h.bugs > 0 ? 'vulnerability' : 'scan',
-    status: 'completed'
+    type: (h.bugs > 0 ? 'vulnerability' : 'scan') as "scan" | "vulnerability" | "fix" | "pr",
+    status: 'completed' as "completed" | "running" | "failed"
   }));
 
   return (

@@ -197,7 +197,7 @@ export const Settings: React.FC = () => {
                 />
                 <div>
                   <h3 className="text-lg font-bold text-foreground">{user?.name || 'Developer'}</h3>
-                  <p className="text-sm text-muted-foreground">@{user?.login || 'user'}</p>
+                  <p className="text-sm text-muted-foreground">@{user?.username || 'user'}</p>
                   <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3 text-green-500" /> Connected since {new Date().toLocaleDateString()}
                   </p>
