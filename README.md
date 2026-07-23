@@ -6,7 +6,7 @@ Rover is a production-grade autonomous software engineering agent that scans rep
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Gemini](https://img.shields.io/badge/AI-Gemini%20Flash-purple.svg)](https://deepmind.google/technologies/gemini/)
+[![React](https://img.shields.io/badge/react-19-blue.svg)](https://react.dev/)
 
 ---
 
@@ -21,8 +21,7 @@ Rover is a production-grade autonomous software engineering agent that scans rep
 8. [Installation & Setup](#-installation--setup)
 9. [Usage Guide](#-usage-guide)
 10. [Troubleshooting & FAQ](#-troubleshooting--faq)
-11. [Roadmap](#-roadmap)
-12. [License](#-license)
+11. [License](#-license)
 
 ---
 
@@ -47,7 +46,7 @@ Traditional agent architectures exhaust API rate-limits by repeatedly calling LL
 * 🔄 **Single-Call Structured Prompting**: Enforces Pydantic `BugResolution` schemas to return diagnosis, source edits, unit test codes, commit messages, and PR templates in one API round-trip.
 * 📦 **Self-Healing Git Workflow**: Automatically generates unique branch suffixes and resolves non-fast-forward push conflicts without manual intervention.
 * 🔑 **GitHub App Authentication**: Full PEM key validation, installation token refresh, and secure webhook HMAC verification.
-* 📊 **Glassmorphic Streamlit Dashboard**: Tabbed runs history panel, visual HTML/CSS scan timelines, and interactive finding cards.
+* 📊 **Glassmorphic React Dashboard**: Modern, multi-tenant Vercel-hosted frontend with customized Outfit styling.
 
 ---
 
@@ -59,7 +58,7 @@ sequenceDiagram
     participant GH as GitHub Webhook/Dashboard
     participant R as Rover Agent
     participant L as Local AST Indexer
-    participant LLM as Gemini / DeepSeek
+    participant LLM as Gemini / Qwen
     participant T as Pytest Executor
     
     GH->>R: Trigger Issue / Fix Request
@@ -90,9 +89,9 @@ sequenceDiagram
 
 | Component | Technology | Description |
 |:---|:---|:---|
-| **API Backend** | FastAPI | High-performance async API processing webhooks and scans. |
-| **Frontend UI** | Streamlit | Glassmorphic visual dashboard with customized Outfit styling. |
-| **Language Model** | Gemini 3.1 Flash / DeepSeek v3 | Standard structured output LLMs with automatic provider fallbacks. |
+| **API Backend** | FastAPI (Python) | High-performance async API processing webhooks and scans. Located in `apps/backend`. |
+| **Frontend UI** | React + Vite | Glassmorphic visual dashboard with TailwindCSS. Located in `apps/web`. |
+| **Language Model** | Gemini / Qwen | Standard structured output LLMs with automatic provider fallbacks. |
 | **Git Tooling** | GitPython / PyGithub | Low-level Git operations, branch renaming, and PR management. |
 | **AST Parsing** | Python `ast` Module | Symbol parsing for classes, methods, imports, and variables. |
 
@@ -116,43 +115,55 @@ Rover does not use raw Personal Access Tokens (PATs). It requires a GitHub App:
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Installation & Setup (5 Minutes)
 
-Please refer to the comprehensive [Setup Guide](docs/setup.md) for detailed configuration, or run the quickstart below:
+You can clone, set up, and run Rover locally in less than 5 minutes.
 
+### 1. Clone the repository
 ```bash
-# Clone the repository
 git clone https://github.com/Reshal-006/rover.git
 cd rover
+```
 
-# Configure virtual environment
+### 2. Configure Backend (Python)
+```bash
+# Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate
+
+# Install Python dependencies
 pip install -r requirements.txt
 
 # Create .env from template
 cp .env.example .env
+```
+*(Make sure to populate your `.env` file with your GitHub App credentials and API keys!)*
+
+### 3. Configure Frontend (Node.js)
+```bash
+# Install NPM dependencies using workspaces
+npm install
 ```
 
 ---
 
 ## 💻 Usage Guide
 
-### 1. Running the API Backend
-```bash
-uvicorn api.main:app --reload --port 8000
-```
+Rover is a monorepo. We provide convenient root-level npm scripts to run both the frontend and backend simultaneously.
 
-### 2. Running the Dashboard
-```bash
-streamlit run dashboard/app.py
-```
+### Running Both Services
 
-### 3. Using the Chrome/Firefox Extension
-1. Open your browser's extension management page.
-2. Turn on **Developer mode**.
-3. Click **Load unpacked** and select the `extension/` directory.
-4. Navigate to any GitHub repository and click **Scan with Rover**.
+**Terminal 1 (Start the Backend):**
+```bash
+npm run dev:backend
+```
+*The backend API will be available at `http://localhost:8000`.*
+
+**Terminal 2 (Start the Frontend):**
+```bash
+npm run dev:web
+```
+*The frontend dashboard will be available at `http://localhost:3000` (or the port Vite outputs).*
 
 ---
 
@@ -161,16 +172,9 @@ streamlit run dashboard/app.py
 * **Issue: Webhook Signature Verification Fails (`403 Forbidden`)**
   Ensure your `WEBHOOK_SECRET` in `.env` matches the Webhook Secret configured in your GitHub App settings exactly.
 * **Issue: Git Push Rejected (`non-fast-forward`)**
-  Rover v1.0.0 automatically handles this. It creates unique branches (`rover/fix-issue-X-YYYYMMDD-HHMMSS-uuid`) and renames them locally if remote push conflicts occur.
+  Rover automatically handles this. It creates unique branches (`rover/fix-issue-X-YYYYMMDD-HHMMSS-uuid`) and renames them locally if remote push conflicts occur.
 * **Issue: `RESOURCE_EXHAUSTED` (Rate Limiting)**
-  Configure `OPENROUTER_API_KEY` in `.env` to enable automatic fallbacks to DeepSeek when Gemini quota limits are exceeded.
-
----
-
-## 🗺️ Roadmap
-- **v1.1.0**: Tree-sitter multi-language integration, Dockerized test execution.
-- **v1.2.0**: Multi-agent orchestrator loops (Critic, Architect, Validator models).
-- **v2.0.0**: Deep semantic search using vector embedding databases.
+  Configure `OPENROUTER_API_KEY` in `.env` to enable automatic fallbacks to OpenRouter when Gemini quota limits are exceeded.
 
 ---
 
