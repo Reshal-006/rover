@@ -8,6 +8,8 @@ Rover is a production-grade autonomous software engineering agent that scans rep
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![React](https://img.shields.io/badge/react-19-blue.svg)](https://react.dev/)
 
+Deployed: [https://rover-web-blue.vercel.app/](https://rover-web-blue.vercel.app/)
+
 ---
 
 ## 📖 Table of Contents
