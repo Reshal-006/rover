@@ -734,11 +734,21 @@ async def login_with_github(db: AsyncSession = Depends(get_db)):
     return await get_user_profile(db)
 
 @router.post("/auth/logout")
-async def logout_user():
+async def logout_user(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Clears current authenticated session.
+    Clears current authenticated session for the calling user.
     """
-    return {"authenticated": False, "status": "unauthenticated", "message": "Successfully signed out."}
+    try:
+        current_user.access_token = None
+        db.add(current_user)
+        await db.commit()
+        return {"authenticated": False, "status": "unauthenticated", "message": "Successfully signed out."}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Logout failed")
 
 
 
@@ -1033,6 +1043,19 @@ async def get_scan_history(
 
 @router.websocket("/ws/scans/{scan_id}")
 async def websocket_scan_stream(websocket: WebSocket, scan_id: str):
+    # Expect a JWT token as query param 'token' for authentication
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008)
+        return
+
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        # optional: validate user exists in DB if needed
+    except Exception:
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(scan_id, websocket)
     from src.storage import ScanStore
     store = ScanStore()
