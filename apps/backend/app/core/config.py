@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GITHUB_TOKEN: str = ""
     GITHUB_INSTALLATION_ID: str = ""
+    # Rate limiting (basic in-memory limiter)
+    RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+    RATE_LIMIT_MAX_REQUESTS: int = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "120"))
     
     class Config:
         case_sensitive = True

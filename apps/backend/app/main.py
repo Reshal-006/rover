@@ -3,8 +3,8 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request, BackgroundTasks, HTTPException
-import hmac, hashlib, json
+from fastapi import Request, BackgroundTasks, HTTPException, Response
+import hmac, hashlib, json, time
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -24,18 +24,50 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+# lightweight in-memory rate limiter store
+app.state._rate_limits = {}
+
 @app.on_event("startup")
 async def on_startup():
     await init_db()
 
-# Enable CORS for React SPA
+# Enable CORS for React SPA (restrict to configured frontend)
+allowed_origins = [settings.FRONTEND_URL.rstrip('/')]
+if settings.BACKEND_URL:
+    allowed_origins.append(settings.BACKEND_URL.rstrip('/'))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(dict.fromkeys(allowed_origins)),
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _simple_rate_limiter(request: Request, call_next):
+    try:
+        ip = request.client.host or "unknown"
+    except Exception:
+        ip = "unknown"
+
+    now = time.time()
+    bucket = app.state._rate_limits.get(ip)
+    if not bucket:
+        app.state._rate_limits[ip] = {"count": 1, "start": now}
+    else:
+        elapsed = now - bucket["start"]
+        if elapsed > settings.RATE_LIMIT_WINDOW_SECONDS:
+            bucket["count"] = 1
+            bucket["start"] = now
+        else:
+            bucket["count"] += 1
+
+    if app.state._rate_limits[ip]["count"] > settings.RATE_LIMIT_MAX_REQUESTS:
+        return Response(content="Too Many Requests", status_code=429)
+
+    return await call_next(request)
 
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
 
