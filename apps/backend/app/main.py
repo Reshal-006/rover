@@ -17,6 +17,8 @@ from apps.backend.app.core.config import settings
 from apps.backend.app.core.database import init_db
 from apps.backend.app.api.v1.endpoints import router as api_v1_router
 from src.agent import run_agent_for_issue
+from fastapi.responses import JSONResponse
+from src.github_auth import GitHubAPIError, GitHubAppAuthError
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -82,6 +84,23 @@ def _verify_github_signature(payload: bytes, sig_header: str) -> bool:
         return False
     expected = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, sig_header)
+
+
+@app.exception_handler(GitHubAPIError)
+async def _handle_github_api_error(request: Request, exc: GitHubAPIError):
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(GitHubAppAuthError)
+async def _handle_github_auth_error(request: Request, exc: GitHubAppAuthError):
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def _handle_unexpected_error(request: Request, exc: Exception):
+    # Generic 500 with minimal info — details are logged server-side only
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.post('/webhook')
