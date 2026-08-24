@@ -6,6 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request, BackgroundTasks, HTTPException, Response
 import hmac, hashlib, json, time
 from dotenv import load_dotenv
+import logging
+
+try:
+    import redis.asyncio as redis
+except Exception:
+    redis = None
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
@@ -26,12 +32,26 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+logger = logging.getLogger("rover.backend")
+
 # lightweight in-memory rate limiter store
 app.state._rate_limits = {}
+app.state._redis = None
 
 @app.on_event("startup")
 async def on_startup():
     await init_db()
+    # Initialize Redis client if configured and available
+    redis_url = settings.REDIS_URL
+    if redis and redis_url:
+        try:
+            app.state._redis = redis.from_url(redis_url, decode_responses=True)
+            # test connection
+            await app.state._redis.ping()
+            logger.info("Connected to Redis for rate-limiting and caching")
+        except Exception as e:
+            logger.warning("Unable to connect to Redis (%s): %s", redis_url, e)
+            app.state._redis = None
 
 # Enable CORS for React SPA (restrict to configured frontend)
 allowed_origins = [settings.FRONTEND_URL.rstrip('/')]
@@ -54,20 +74,38 @@ async def _simple_rate_limiter(request: Request, call_next):
     except Exception:
         ip = "unknown"
 
+    # Prefer Redis-backed rate limiting (atomic and shared across instances).
+    redis_client = getattr(app.state, "_redis", None)
+    window = settings.RATE_LIMIT_WINDOW_SECONDS
+    max_requests = settings.RATE_LIMIT_MAX_REQUESTS
+
+    if redis_client is not None:
+        key = f"rate:{ip}"
+        try:
+            count = await redis_client.incr(key)
+            if count == 1:
+                await redis_client.expire(key, window)
+            if count > max_requests:
+                return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
+        except Exception as e:
+            # Redis failed; fall back to in-memory limiter but log the incident
+            logger.warning("Redis rate limiter failure, falling back to memory: %s", e)
+
+    # In-memory fallback (per-process, not global across instances)
     now = time.time()
     bucket = app.state._rate_limits.get(ip)
     if not bucket:
         app.state._rate_limits[ip] = {"count": 1, "start": now}
     else:
         elapsed = now - bucket["start"]
-        if elapsed > settings.RATE_LIMIT_WINDOW_SECONDS:
+        if elapsed > window:
             bucket["count"] = 1
             bucket["start"] = now
         else:
             bucket["count"] += 1
 
-    if app.state._rate_limits[ip]["count"] > settings.RATE_LIMIT_MAX_REQUESTS:
-        return Response(content="Too Many Requests", status_code=429)
+    if app.state._rate_limits[ip]["count"] > max_requests:
+        return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
 
     return await call_next(request)
 
