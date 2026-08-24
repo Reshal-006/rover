@@ -20,10 +20,11 @@ logger = logging.getLogger("rover.github_auth")
 # Ensure we load the repo-root .env
 load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
-# Load raw environment variables
+# Load raw environment variables (use canonical names)
 GITHUB_APP_ID = os.getenv('GITHUB_APP_ID', '').strip()
 GITHUB_PRIVATE_KEY = os.getenv('GITHUB_PRIVATE_KEY', '').strip()
-GITHUB_WEBHOOK_SECRET = os.getenv('GITHUB_WEBHOOK_SECRET', '').strip()
+# Use unified webhook secret name used across the codebase
+WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '').strip() or os.getenv('GITHUB_WEBHOOK_SECRET', '').strip()
 
 # In-memory thread-safe cache for installation tokens
 # Format: installation_id -> {"token": str, "expires_at": datetime (timezone.utc)}
@@ -113,6 +114,24 @@ def _load_private_key(key_setting: str) -> str:
     return key_content
 
 
+# Setup a requests Session with retries for GitHub API calls
+def _create_requests_session():
+    session = requests.Session()
+    try:
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        retries = Retry(total=3, backoff_factor=0.3, status_forcelist=(500, 502, 504))
+        adapter = HTTPAdapter(max_retries=retries)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+    except Exception:
+        pass
+    return session
+
+
+_requests_session = _create_requests_session()
+
+
 def _parse_iso_datetime(dt_str: str) -> datetime:
     """
     Parses an ISO 8601 UTC datetime string (e.g. 2016-07-11T22:14:10Z) into a timezone-aware datetime object.
@@ -195,7 +214,7 @@ def get_installation_token(installation_id: int) -> str:
     }
 
     try:
-        response = requests.post(url, headers=headers, timeout=10)
+        response = _requests_session.post(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         raise GitHubAPIError(f"Network error while requesting installation token: {e}")
 
@@ -255,7 +274,7 @@ def get_installation_info(installation_id: int) -> dict:
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _requests_session.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         raise GitHubAPIError(f"Network error while retrieving installation info: {e}")
 
@@ -413,7 +432,7 @@ def list_installation_repositories(installation_id: int) -> list[dict]:
     logger.info("Fetching accessible repositories for installation %s...", installation_id)
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _requests_session.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         raise GitHubAPIError(f"Network error while listing repositories: {e}")
 
@@ -468,7 +487,7 @@ def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
     logger.debug("Checking repository access for %s on installation %s...", repo_full_name, installation_id)
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _requests_session.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             logger.info("Access confirmed for repository %s.", repo_full_name)
             return True
@@ -477,7 +496,7 @@ def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
             repo_full_name, response.status_code
         )
         return False
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error("Exception checking repository access for %s: %s", repo_full_name, e)
         return False
 
@@ -501,7 +520,7 @@ def get_repo_installation(owner: str, repo: str) -> int | None:
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _requests_session.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             inst_id = data.get("id")
@@ -512,7 +531,7 @@ def get_repo_installation(owner: str, repo: str) -> int | None:
             logger.warning("GitHub App is not installed on repository %s/%s", owner, repo)
         else:
             logger.warning("Dynamic installation lookup returned status %s for %s/%s", response.status_code, owner, repo)
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning("Error during dynamic installation lookup for %s/%s: %s", owner, repo, e)
     return None
 
