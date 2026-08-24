@@ -31,6 +31,11 @@ WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '').strip() or os.getenv('GITHUB_WE
 _token_cache = {}
 _cache_lock = threading.Lock()
 
+# Simple TTL cache for installation repositories: installation_id -> {"fetched_at": datetime, "repos": [...]}
+_repos_cache = {}
+_repos_cache_lock = threading.Lock()
+_REPOS_CACHE_TTL = int(os.getenv("REPOS_CACHE_TTL_SECONDS", "60"))
+
 
 def clear_token_cache():
     """Clears the in-memory token cache to force a refresh on next call."""
@@ -421,6 +426,14 @@ def list_installation_repositories(installation_id: int) -> list[dict]:
         ExpiredJWTError: if the installation token fails due to expired JWT.
         GitHubAPIError: on API/network failures.
     """
+    # Check cache first
+    now = datetime.now(timezone.utc)
+    with _repos_cache_lock:
+        cached = _repos_cache.get(installation_id)
+        if cached and (now - cached.get("fetched_at")).total_seconds() < _REPOS_CACHE_TTL:
+            logger.debug("Returning cached repositories for installation %s", installation_id)
+            return cached.get("repos", [])
+
     token = get_installation_token(installation_id)
     url = "https://api.github.com/installation/repositories"
     headers = {
@@ -458,6 +471,9 @@ def list_installation_repositories(installation_id: int) -> list[dict]:
         data = response.json()
         repos = data.get("repositories", [])
         logger.info("Successfully fetched %s repositories for installation %s.", len(repos), installation_id)
+        # Cache the repositories for a short TTL
+        with _repos_cache_lock:
+            _repos_cache[installation_id] = {"fetched_at": now, "repos": repos}
         return repos
     except ValueError as e:
         raise GitHubAPIError(f"Failed to parse repositories response: {e}")
