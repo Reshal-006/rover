@@ -118,7 +118,7 @@ async def list_repositories(
     # If DB is empty for current user and user has an installation, attempt an auto-sync
     if not db_repos and current_user.installation_id:
         try:
-            gh_repos = github_auth.list_installation_repositories(current_user.installation_id)
+            gh_repos = await asyncio.to_thread(github_auth.list_installation_repositories, current_user.installation_id)
             for repo_data in gh_repos:
                 full_name = repo_data.get("full_name")
                 if not full_name:
@@ -183,7 +183,7 @@ async def _run_sync_task(user_id: str, inst_id: int):
                 return
 
             try:
-                gh_repos = github_auth.list_installation_repositories(inst_id)
+                gh_repos = await asyncio.to_thread(github_auth.list_installation_repositories, inst_id)
             except Exception as e:
                 logger.error("Background sync failed fetching GitHub repositories: %s", e)
                 return
@@ -243,7 +243,8 @@ async def sync_repositories(
     # If user model lacks installation_id, discover via OAuth token
     if not inst_id and current_user.access_token:
         try:
-            inst_res = requests.get(
+            inst_res = await asyncio.to_thread(
+                requests.get,
                 "https://api.github.com/user/installations",
                 headers={
                     "Authorization": f"Bearer {current_user.access_token}",
@@ -301,7 +302,8 @@ async def trigger_scan(
     if settings.USE_GITHUB_APP:
         if not installation_id:
             raise HTTPException(status_code=400, detail="GitHub App mode enabled but no installation ID resolved for your user session.")
-        if not github_auth.check_repository_access(installation_id, repo_name):
+        has_access = await asyncio.to_thread(github_auth.check_repository_access, installation_id, repo_name)
+        if not has_access:
             raise HTTPException(status_code=403, detail=f"Access Denied: App is not installed on '{repo_name}'.")
 
     scan_id = f"scan-{uuid.uuid4().hex[:8]}"
@@ -558,7 +560,8 @@ async def github_oauth_callback(payload: dict, db: AsyncSession = Depends(get_db
         )
 
     try:
-        token_res = requests.post(
+        token_res = await asyncio.to_thread(
+            requests.post,
             "https://github.com/login/oauth/access_token",
             headers={"Accept": "application/json"},
             data={
@@ -580,7 +583,8 @@ async def github_oauth_callback(payload: dict, db: AsyncSession = Depends(get_db
 
     # Fetch authentic user profile from GitHub
     try:
-        user_res = requests.get(
+        user_res = await asyncio.to_thread(
+            requests.get,
             "https://api.github.com/user",
             headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             timeout=10
