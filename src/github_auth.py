@@ -529,6 +529,42 @@ def get_app_info() -> dict:
         raise GitHubAPIError(f"Failed to parse App info response: {e}")
 
 
+async def get_user_installations_async(access_token: str) -> list:
+    """Returns the list of installations available to a user OAuth token."""
+    if not access_token:
+        return []
+
+    url = "https://api.github.com/user/installations"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+
+    if httpx is None:
+        # Fallback to sync requests in a thread
+        try:
+            resp = await asyncio.to_thread(_requests_session.get, url, headers=headers, timeout=10)
+        except Exception as e:
+            raise GitHubAPIError(f"Network error while fetching user installations: {e}")
+        if resp.status_code != 200:
+            raise GitHubAPIError(f"Failed to fetch user installations: {resp.status_code}")
+        try:
+            return resp.json().get("installations", [])
+        except Exception:
+            return []
+
+    client = _get_async_client()
+    try:
+        resp = await client.get(url, headers=headers)
+    except Exception as e:
+        raise GitHubAPIError(f"Network error while fetching user installations: {e}")
+
+    if resp.status_code != 200:
+        raise GitHubAPIError(f"Failed to fetch user installations: {resp.status_code}")
+
+    try:
+        return resp.json().get("installations", [])
+    except Exception:
+        return []
+
+
 def list_installation_repositories(installation_id: int) -> list[dict]:
     """
     Lists repositories accessible to the specified installation.

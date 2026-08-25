@@ -608,16 +608,10 @@ async def github_oauth_callback(payload: dict, db: AsyncSession = Depends(get_db
     discovered_inst_id = None
     discovered_account_type = "User"
     try:
-        inst_res = requests.get(
-            "https://api.github.com/user/installations",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-            timeout=10
-        )
-        if inst_res.status_code == 200:
-            installations = inst_res.json().get("installations", [])
-            if installations:
-                discovered_inst_id = installations[0].get("id")
-                discovered_account_type = installations[0].get("account", {}).get("type", "User")
+        installations = await github_auth.get_user_installations_async(access_token)
+        if installations:
+            discovered_inst_id = installations[0].get("id")
+            discovered_account_type = installations[0].get("account", {}).get("type", "User")
     except Exception as e:
         logger.warning("Could not discover GitHub App installations for user %s: %s", account_name, e)
 
