@@ -38,6 +38,25 @@ The FastAPI webhook listener must run continuously to receive incoming events (i
 5. Update your GitHub App's **Webhook URL** settings to point to:
    `https://rover-api.onrender.com/webhook`
 
+### Redis (recommended)
+
+For production deployments we strongly recommend provisioning a managed Redis instance and configuring Rover to use it. Redis is used for:
+- Shared caching of GitHub App installation tokens and repository lists (prevents duplicate token requests across instances).
+- Distributed rate-limiting for webhook endpoints.
+
+Environment variables:
+- `REDIS_URL` — connection string, e.g. `redis://:<password>@<host>:<port>/0`
+
+Render setup notes:
+- Add `REDIS_URL` to your service environment variables. If using Render's Managed Redis, use the provided connection string.
+- Ensure network ingress from your service to the Redis instance (VPC or public access depending on provider).
+
+Key naming and TTLs (implementation notes):
+- Installation tokens are cached under `gh:install_token:{installation_id}` with TTL set to token expiry minus a small safety margin.
+- Repository lists are cached under `gh:install_repos:{installation_id}` with TTL controlled by `REPOS_CACHE_TTL_SECONDS` (default 60).
+
+If `REDIS_URL` is not set or Redis is unreachable, Rover falls back to in-process memory caches and single-instance rate limiting.
+
 ---
 
 ## 3. Streamlit Dashboard (Streamlit Share)
