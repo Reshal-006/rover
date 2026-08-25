@@ -14,6 +14,44 @@ import jwt
 import requests
 from github import Github
 import asyncio
+try:
+    import httpx
+except Exception:
+    httpx = None
+
+try:
+    import redis.asyncio as aioredis
+except Exception:
+    aioredis = None
+
+# Async/httpx client (lazy)
+_async_client: "httpx.AsyncClient | None" = None
+
+# Async Redis client (lazy)
+_aioredis_client = None
+
+def _get_async_client() -> "httpx.AsyncClient":
+    global _async_client
+    if _async_client is None:
+        if httpx is None:
+            raise RuntimeError("httpx is not installed; async GitHub operations require httpx")
+        _async_client = httpx.AsyncClient(timeout=10.0)
+    return _async_client
+
+async def _get_aioredis():
+    global _aioredis_client
+    if _aioredis_client is not None:
+        return _aioredis_client
+    redis_url = os.getenv("REDIS_URL", "")
+    if not redis_url or aioredis is None:
+        return None
+    try:
+        _aioredis_client = aioredis.from_url(redis_url, decode_responses=True)
+        await _aioredis_client.ping()
+        return _aioredis_client
+    except Exception:
+        _aioredis_client = None
+        return None
 
 # Setup module-level logger
 logger = logging.getLogger("rover.github_auth")
@@ -263,6 +301,79 @@ def get_installation_token(installation_id: int) -> str:
     return token
 
 
+async def get_installation_token_async(installation_id: int) -> str:
+    """
+    Async implementation that uses Redis for cross-process caching when available.
+    Falls back to the sync `get_installation_token` if `httpx` or `aioredis` are unavailable.
+    """
+    # Try Redis cache first
+    aioredis_cli = await _get_aioredis()
+    redis_key = f"gh:install_token:{installation_id}"
+    now_ts = int(time.time())
+    if aioredis_cli:
+        try:
+            data = await aioredis_cli.get(redis_key)
+            if data:
+                obj = json.loads(data)
+                expires = int(obj.get("expires_at_ts", 0))
+                if expires - now_ts > 60:
+                    return obj.get("token")
+        except Exception:
+            pass
+
+    # If httpx not available, fall back to sync implementation (runs in thread)
+    if httpx is None:
+        return await asyncio.to_thread(get_installation_token, installation_id)
+
+    # Build JWT and request token using Async HTTP
+    jwt_token = create_app_jwt()
+    url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+    headers = {
+        "Authorization": f"Bearer {jwt_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+    client = _get_async_client()
+    try:
+        resp = await client.post(url, headers=headers)
+    except Exception as e:
+        # fallback to sync call
+        return await asyncio.to_thread(get_installation_token, installation_id)
+
+    if resp.status_code != 201:
+        txt = None
+        try:
+            txt = resp.json()
+        except Exception:
+            txt = resp.text
+        raise InstallationTokenRequestError(f"Failed to request installation token (status {resp.status_code}): {txt}")
+
+    data = resp.json()
+    token = data.get("token")
+    expires_at_str = data.get("expires_at")
+    try:
+        expires_at = _parse_iso_datetime(expires_at_str)
+        expires_ts = int(expires_at.replace(tzinfo=timezone.utc).timestamp())
+    except Exception:
+        expires_ts = now_ts + 3600
+
+    # Cache in Redis if available
+    if aioredis_cli and token:
+        try:
+            payload = json.dumps({"token": token, "expires_at_ts": expires_ts})
+            ttl = max(1, expires_ts - now_ts - 10)
+            await aioredis_cli.set(redis_key, payload, ex=ttl)
+        except Exception:
+            pass
+
+    # Also populate in-memory cache for sync callers
+    with _cache_lock:
+        _token_cache[installation_id] = {"token": token, "expires_at": datetime.fromtimestamp(expires_ts, timezone.utc)}
+
+    return token
+
+
 def get_installation_info(installation_id: int) -> dict:
     """
     Queries details about a specific installation. Requires App JWT authentication.
@@ -480,6 +591,62 @@ def list_installation_repositories(installation_id: int) -> list[dict]:
         raise GitHubAPIError(f"Failed to parse repositories response: {e}")
 
 
+async def list_installation_repositories_async(installation_id: int) -> list[dict]:
+    """
+    Async version using Redis cache when available.
+    """
+    aioredis_cli = await _get_aioredis()
+    cache_key = f"gh:install_repos:{installation_id}"
+    ttl = int(os.getenv("REPOS_CACHE_TTL_SECONDS", "60"))
+    if aioredis_cli:
+        try:
+            raw = await aioredis_cli.get(cache_key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+
+    # Use async token fetch
+    try:
+        token = await get_installation_token_async(installation_id)
+    except Exception as e:
+        raise GitHubAPIError(f"Failed to obtain installation token: {e}")
+
+    if httpx is None:
+        # fallback to sync
+        return await asyncio.to_thread(list_installation_repositories, installation_id)
+
+    client = _get_async_client()
+    url = "https://api.github.com/installation/repositories"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    try:
+        resp = await client.get(url, headers=headers)
+    except Exception as e:
+        raise GitHubAPIError(f"Network error while listing repositories: {e}")
+
+    if resp.status_code != 200:
+        try:
+            msg = resp.json()
+        except Exception:
+            msg = resp.text
+        raise GitHubAPIError(f"GitHub API returned error (status {resp.status_code}): {msg}")
+
+    data = resp.json()
+    repos = data.get("repositories", [])
+
+    # Cache to Redis and in-memory
+    if aioredis_cli:
+        try:
+            await aioredis_cli.set(cache_key, json.dumps(repos), ex=ttl)
+        except Exception:
+            pass
+
+    with _repos_cache_lock:
+        _repos_cache[installation_id] = {"fetched_at": datetime.now(timezone.utc), "repos": repos}
+
+    return repos
+
+
 def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
     """
     Checks if the specified repository belongs to the current installation.
@@ -518,6 +685,41 @@ def check_repository_access(installation_id: int, repo_full_name: str) -> bool:
         return False
 
 
+async def check_repository_access_async(installation_id: int, repo_full_name: str) -> bool:
+    aioredis_cli = await _get_aioredis()
+    cache_key = f"gh:repo_access:{installation_id}:{repo_full_name}"
+    if aioredis_cli:
+        try:
+            val = await aioredis_cli.get(cache_key)
+            if val is not None:
+                return val == "1"
+        except Exception:
+            pass
+
+    try:
+        token = await get_installation_token_async(installation_id)
+    except Exception:
+        return False
+
+    if httpx is None:
+        return await asyncio.to_thread(check_repository_access, installation_id, repo_full_name)
+
+    client = _get_async_client()
+    url = f"https://api.github.com/repos/{repo_full_name}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    try:
+        resp = await client.get(url, headers=headers)
+        ok = resp.status_code == 200
+        if aioredis_cli:
+            try:
+                await aioredis_cli.set(cache_key, "1" if ok else "0", ex=60)
+            except Exception:
+                pass
+        return ok
+    except Exception:
+        return False
+
+
 def get_repo_installation(owner: str, repo: str) -> int | None:
     """
     Queries GET /repos/{owner}/{repo}/installation using the App JWT to dynamically
@@ -551,6 +753,30 @@ def get_repo_installation(owner: str, repo: str) -> int | None:
     except requests.RequestException as e:
         logger.warning("Error during dynamic installation lookup for %s/%s: %s", owner, repo, e)
     return None
+
+
+async def get_repo_installation_async(owner: str, repo: str) -> int | None:
+    if httpx is None:
+        return await asyncio.to_thread(get_repo_installation, owner, repo)
+
+    try:
+        jwt_token = create_app_jwt()
+    except Exception:
+        return None
+
+    client = _get_async_client()
+    url = f"https://api.github.com/repos/{owner}/{repo}/installation"
+    headers = {"Authorization": f"Bearer {jwt_token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            inst_id = data.get("id")
+            if inst_id:
+                return int(inst_id)
+        return None
+    except Exception:
+        return None
 
 
 def sanitize_text(text: str) -> str:
