@@ -1,0 +1,12 @@
+pytest==7.4.0
+requests==2.34.0
+PyGithub==2.9.1
+httpx==0.28.1
+redis>=4.5.0
+fastapi==0.95.0
+fastapi==0.139.0
+requests==2.34.2
+PyGithub==2.9.1
+httpx==0.28.1
+redis>=4.5.0
+pytest==9.1.1

@@ -119,6 +119,24 @@ def run_tests(test_file: str = None, workspace_dir: str = WORKSPACE) -> dict:
     if test_file:
         cmd.append(test_file)
 
+    # Ensure an isolated venv in the workspace for test runs using requirements-dev.txt
+    venv_path = os.path.join(workspace_dir, '.venv')
+    python_bin = sys.executable
+    if not os.path.exists(os.path.join(venv_path, 'Scripts' if os.name == 'nt' else 'bin')):
+        # Create venv
+        subprocess.run([python_bin, '-m', 'venv', venv_path], check=False)
+        pip_exec = os.path.join(venv_path, 'Scripts' if os.name == 'nt' else 'bin', 'pip')
+        # Install dev requirements from repo root's requirements-dev.txt if present
+        repo_dev_reqs = os.path.abspath(os.path.join(os.getcwd(), 'requirements-dev.txt'))
+        if os.path.exists(repo_dev_reqs):
+            subprocess.run([pip_exec, 'install', '-r', repo_dev_reqs], check=False)
+
+    # Use workspace venv python to run pytest for isolation
+    venv_python = os.path.join(venv_path, 'Scripts' if os.name == 'nt' else 'bin', 'python')
+    cmd = [venv_python, '-m', 'pytest', '-v', '--tb=short']
+    if test_file:
+        cmd.append(test_file)
+
     result = subprocess.run(
         cmd,
         capture_output=True,
