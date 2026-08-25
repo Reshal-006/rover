@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import jwt
 import requests
 from github import Github
+import asyncio
 
 # Setup module-level logger
 logger = logging.getLogger("rover.github_auth")
@@ -563,4 +564,22 @@ def sanitize_text(text: str) -> str:
     text = re.sub(r'ghp_[A-Za-z0-9_]+', 'ghp_[REDACTED]', text)
     text = re.sub(r'ghs_[A-Za-z0-9_]+', 'ghs_[REDACTED]', text)
     return text
+
+
+# Async wrappers: run the existing sync implementations in a threadpool so callers
+# in async FastAPI endpoints can `await` these without blocking the event loop.
+async def list_installation_repositories_async(installation_id: int) -> list[dict]:
+    return await asyncio.to_thread(list_installation_repositories, installation_id)
+
+
+async def check_repository_access_async(installation_id: int, repo_full_name: str) -> bool:
+    return await asyncio.to_thread(check_repository_access, installation_id, repo_full_name)
+
+
+async def get_repo_installation_async(owner: str, repo: str) -> int | None:
+    return await asyncio.to_thread(get_repo_installation, owner, repo)
+
+
+async def get_installation_token_async(installation_id: int) -> str:
+    return await asyncio.to_thread(get_installation_token, installation_id)
 

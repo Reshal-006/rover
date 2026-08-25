@@ -118,7 +118,7 @@ async def list_repositories(
     # If DB is empty for current user and user has an installation, attempt an auto-sync
     if not db_repos and current_user.installation_id:
         try:
-            gh_repos = await asyncio.to_thread(github_auth.list_installation_repositories, current_user.installation_id)
+            gh_repos = await github_auth.list_installation_repositories_async(current_user.installation_id)
             for repo_data in gh_repos:
                 full_name = repo_data.get("full_name")
                 if not full_name:
@@ -183,7 +183,7 @@ async def _run_sync_task(user_id: str, inst_id: int):
                 return
 
             try:
-                gh_repos = await asyncio.to_thread(github_auth.list_installation_repositories, inst_id)
+                gh_repos = await github_auth.list_installation_repositories_async(inst_id)
             except Exception as e:
                 logger.error("Background sync failed fetching GitHub repositories: %s", e)
                 return
@@ -302,7 +302,7 @@ async def trigger_scan(
     if settings.USE_GITHUB_APP:
         if not installation_id:
             raise HTTPException(status_code=400, detail="GitHub App mode enabled but no installation ID resolved for your user session.")
-        has_access = await asyncio.to_thread(github_auth.check_repository_access, installation_id, repo_name)
+        has_access = await github_auth.check_repository_access_async(installation_id, repo_name)
         if not has_access:
             raise HTTPException(status_code=403, detail=f"Access Denied: App is not installed on '{repo_name}'.")
 
@@ -474,7 +474,9 @@ async def fix_bug(
         parts = repo_full_name.split("/")
         owner, repo = parts[0], parts[1] if len(parts) == 2 else ("", repo_full_name)
 
-        installation_id = payload.installation_id or current_user.installation_id or (github_auth.get_repo_installation(owner, repo) if owner and repo else None)
+        installation_id = payload.installation_id or current_user.installation_id
+        if not installation_id and owner and repo:
+            installation_id = await github_auth.get_repo_installation_async(owner, repo)
 
         issue_number = await asyncio.to_thread(
             create_issue_from_scan,
