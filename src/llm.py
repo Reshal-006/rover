@@ -122,10 +122,10 @@ read_file_fn = types.FunctionDeclaration(
         'the code or find the root cause of a bug.'
     ),
     parameters=types.Schema(
-        type=types.Type.OBJECT,
+        type='OBJECT',
         properties={
             'filepath': types.Schema(
-                type=types.Type.STRING,
+                type='STRING',
                 description='Path relative to the repo root. Example: src/auth.py'
             )
         },
@@ -141,10 +141,10 @@ search_code_fn = types.FunctionDeclaration(
         'before reading any full file.'
     ),
     parameters=types.Schema(
-        type=types.Type.OBJECT,
+        type='OBJECT',
         properties={
             'query': types.Schema(
-                type=types.Type.STRING,
+                type='STRING',
                 description='The keyword to search for, e.g. password or KeyError'
             )
         },
@@ -160,14 +160,14 @@ edit_file_fn = types.FunctionDeclaration(
         'and then to write the fix itself.'
     ),
     parameters=types.Schema(
-        type=types.Type.OBJECT,
+        type='OBJECT',
         properties={
             'filepath': types.Schema(
-                type=types.Type.STRING,
+                type='STRING',
                 description='Path relative to the repo root'
             ),
             'new_content': types.Schema(
-                type=types.Type.STRING,
+                type='STRING',
                 description='The complete file content to write'
             )
         },
@@ -183,10 +183,10 @@ run_tests_fn = types.FunctionDeclaration(
         'and again after the fix to confirm it passes.'
     ),
     parameters=types.Schema(
-        type=types.Type.OBJECT,
+        type='OBJECT',
         properties={
             'test_file': types.Schema(
-                type=types.Type.STRING,
+                type='STRING',
                 description='Optional: path to a specific test file'
             )
         }
